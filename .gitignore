@@ -1,0 +1,31 @@
+# --- Python 共通 ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.python-version
+uv.lock  # (注: ライブラリとして公開しない「アプリケーション/研究」ならlockは含めても良いですが、まずは除外も一般的です)
+
+# --- NEURON / シミュレーション関連 ---
+# コンパイルで生成されるアーキテクチャ依存フォルダ
+x86_64/
+arm64/
+mips64/
+powerpc/
+
+# 中間ファイル
+*.o
+*.c
+*.so
+*.mod.c
+
+# --- 実験データ・ログ (Hydra & 手動出力) ---
+# シミュレーション結果は巨大になるため Git には入れない
+outputs/
+multirun/
+results/
+data/
+figure/
+*.png
+*.pdf
+*.npz
