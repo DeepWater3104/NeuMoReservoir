@@ -1,0 +1,6 @@
+# Task-specific parameters for TI-46 spoken digit recognition
+name: "ti46"
+n_repetition: 5               # Number of times the dataset is repeated
+num_outputs: 10               # Number of readout units (classes)
+exc_syn_weight: 0.0005        # Synaptic weight for excitatory inputs
+maximum_firing_rate: 10       # Maximum firing rate for input encoding (Hz)
