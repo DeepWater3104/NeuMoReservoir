@@ -1,6 +1,18 @@
 # Task-specific parameters for TI-46 spoken digit recognition
 name: "ti46"
-n_repetition: 5               # Number of times the dataset is repeated
-num_outputs: 10               # Number of readout units (classes)
-exc_syn_weight: 0.0005        # Synaptic weight for excitatory inputs
-maximum_firing_rate: 10       # Maximum firing rate for input encoding (Hz)
+n_repetition: 5
+num_outputs: 10
+num_states: 100
+exc_num_syn: 78               # Added: Required by DataGenerator
+exc_syn_weight: 0.0005
+exc_syn_tau1: 1               # Added: Required for synapse initialization
+exc_syn_tau2: 5               # Added: Required for synapse initialization
+maximum_firing_rate: 10
+decimation_factor: 64         # Added: Required for audio processing
+sampling_frequency: 12500     # Added: Required for audio processing
+reg: 1e-7                     # Added: Task-specific regularization
+inh_num_syns: 0               # Added: Default to 0 if not used
+inh_syn_weight: 0.0
+inh_syn_tau1: 1
+inh_syn_tau2: 5
+plot_all: true

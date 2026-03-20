@@ -3,8 +3,8 @@ from neuron import h as nrn
 from neuron.units import ms, mV
 
 def create_datasyn_correspondance_toydata(self):
-    self.exc_dataresolution = (max(self.get_inputdata()) - min(self.get_inputdata())) / (self.exc_num_syns - self.exc_num_synchro_syns+1)
-    for i in range(self.exc_num_syns):
+    self.exc_dataresolution = (max(self.get_inputdata()) - min(self.get_inputdata())) / (self.exc_num_syn - self.exc_num_synchro_syns+1)
+    for i in range(self.exc_num_syn):
         minimum = i * self.exc_dataresolution + min(self.get_inputdata()) - (self.exc_num_synchro_syns-1)*self.exc_dataresolution
         maximum = (i+1)*self.exc_dataresolution + min(self.get_inputdata())
 
@@ -43,7 +43,7 @@ def create_synapses_toydata(self, cell):
 
     self.exc_syn_list = []
     self.inh_syn_list = []
-    for i in range(self.exc_num_syns):
+    for i in range(self.exc_num_syn):
         syn_loc = total_length * self.prng.random()
 
         for index, sec in enumerate(all_dend_soma):
@@ -136,7 +136,7 @@ def create_synapses_hetero(self, cell, condition):
 
     # 4. シナプスの配置（興奮性を例に）
     # 重みに基づいてセグメントをランダムに選択
-    chosen_indices = self.prng.choice(len(all_segs), size=self.exc_num_syns, p=prob)
+    chosen_indices = self.prng.choice(len(all_segs), size=self.exc_num_syn, p=prob)
 
     self.exc_syn_list = []
     for idx in chosen_indices:
@@ -262,7 +262,7 @@ class datagenerator():
         self.len_transientdata = params['len_transientdata']
         self.len_trainingdata  = params['len_trainingdata']
         self.len_testdata      = params['len_testdata']
-        self.exc_num_syns         = params['exc_num_syns']
+        self.exc_num_syn          = params['exc_num_syn']
         self.exc_num_synchro_syns = params['exc_num_synchro_syns']
         self.exc_syn_weight       = params['exc_syn_weight']
         self.exc_syn_tau1         = params['exc_syn_tau1']
@@ -373,12 +373,10 @@ class TI46word_datagenerator(datagenerator):
     def __init__(self, params, prng, trainseq_code=None, testseq_code=None, path_to_dataset="../dataset/ti46/ti20/"):
         self.prng = prng
 
-        self.exc_num_syns         = params['exc_num_syns']
+        self.exc_num_syn          = params['exc_num_syn']
         self.exc_syn_weight       = params['exc_syn_weight']
         self.exc_syn_tau1         = params['exc_syn_tau1']
         self.exc_syn_tau2         = params['exc_syn_tau2']
-        self.syn_mechanisms       = params['syn_mechanisms']
-        self.IP3stim              = params['IP3stim']
 
         self.maximum_firing_rate = params['maximum_firing_rate']
 
@@ -515,10 +513,7 @@ class TI46word_datagenerator(datagenerator):
             return time_coch, coch
 
     def create_synapses(self, cell, ip3=None, cyt=None):
-        if self.syn_mechanisms=='ionotropic':
-            create_synapses_toydata(self, cell)
-        elif self.syn_mechanisms=='ionotropic_and_metabotropic':
-            create_synapses_ionotoropic_and_metabotropic(self, cell, ip3, cyt)
+        create_synapses_toydata(self, cell)
 
 
     def connect_synapses(self):
@@ -562,12 +557,10 @@ class RandomPattern_datagenerator(datagenerator):
         self.prng = prng
         
         # --- NEURON Synapse Parameters (継承) ---
-        self.exc_num_syns         = params['exc_num_syns']
+        self.exc_num_syn          = params['exc_num_syn']
         self.exc_syn_weight       = params['exc_syn_weight']
         self.exc_syn_tau1         = params['exc_syn_tau1']
         self.exc_syn_tau2         = params['exc_syn_tau2']
-        self.syn_mechanisms       = params['syn_mechanisms']
-        self.IP3stim              = params.get('IP3stim', 0) # keyがない場合の対策
 
         self.firing_rate = params['firing_rate']
 
@@ -582,7 +575,7 @@ class RandomPattern_datagenerator(datagenerator):
         # --- Random Task Specific Parameters ---
         self.num_outputs  = params['num_outputs'] # クラス数（例: 10クラス分類なら10）
         self.num_classes  = params['num_outputs'] # クラス数（例: 10クラス分類なら10）
-        self.num_channels = params['exc_num_syns'] # 入力次元数（シナプス数と一致させる）
+        self.num_channels = params['exc_num_syn'] # 入力次元数（シナプス数と一致させる）
         self.condition    = params['condition'] # 
         self.jitter_std   = params['jitter_std'] # 
         
@@ -703,13 +696,7 @@ class RandomPattern_datagenerator(datagenerator):
 
     def create_synapses(self, cell, ip3=None, cyt=None):
         # 外部関数に依存しているようですが、呼び出し構造は維持
-        if self.syn_mechanisms=='ionotropic':
-            #create_synapses_toydata(self, cell) # 必要に応じてimport
-            create_synapses_hetero(self, cell, self.condition)
-            #pass 
-        elif self.syn_mechanisms=='ionotropic_and_metabotropic':
-            create_synapses_ionotoropic_and_metabotropic(self, cell, ip3, cyt)
-            #pass
+        create_synapses_hetero(self, cell, self.condition)
 
     def connect_synapses(self):
         connect_synapses_toydata(self)
@@ -761,8 +748,7 @@ class RandomPattern_datagenerator(datagenerator):
             # len_dataはappend済みなので、今回分を除くには [:-1]
             offset_time = sum(self.len_data[:-1]) * self.bin_width
 
-        if self.syn_mechanisms == 'ionotropic':
-            for spike_time, synapse_idx in spike_trains:
-                abs_time = offset_time + spike_time
-                self.exc_nc_list[int(synapse_idx)].event(abs_time)
-            return spike_trains
+        for spike_time, synapse_idx in spike_trains:
+            abs_time = offset_time + spike_time
+            self.exc_nc_list[int(synapse_idx)].event(abs_time)
+        return spike_trains
