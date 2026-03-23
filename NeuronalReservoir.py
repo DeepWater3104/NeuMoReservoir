@@ -4,15 +4,63 @@ import numpy as np
 import math
 nrn.load_file("stdrun.hoc")
 
+def get_dend_and_soma(cell):
+    all_dend_soma = []
+    for sec in cell.somatic:
+        all_dend_soma.append(sec)
+    for sec in cell.basal:
+        all_dend_soma.append(sec)
+    for sec in cell.apical:
+        all_dend_soma.append(sec)
+    return all_dend_soma
+
+def check_synapse_stats(self):
+    from neuron import h
+    import numpy as np
+    from collections import Counter
+
+    # 1. 各シナプスのセグメントオブジェクトを直接取得
+    exc_segs = [syn.get_segment() for syn in self.exc_syn_list]
+    
+    # 2. セグメントごとの重複数をカウント
+    seg_counts = Counter(exc_segs)
+    occ_segs_count = len(seg_counts) # シナプスが存在するユニークなセグメント数
+    max_overlap = max(seg_counts.values()) if seg_counts else 0
+
+    # 3. 距離データの取得
+    exc_dists = [h.distance(seg) for seg in exc_segs]
+
+    print(f"\n--- Detailed Placement Check ({self.condition}) ---")
+    print(f"Total Synapses: {len(exc_dists)}")
+    print(f"Occupied Segments: {occ_segs_count}")
+    print(f"Max Overlap in one segment: {max_overlap} synapses")
+    print(f"Average Density: {len(exc_dists)/occ_segs_count:.2f} syns/segment (among occupied)")
+
+    # 4. 距離ごとの「シナプス数」vs「セグメント数」
+    print("\n[Distance: Synapses vs Occupied Segments]")
+    bins = np.arange(0, 1100, 100)
+    for i in range(len(bins)-1):
+        lower, upper = bins[i], bins[i+1]
+        
+        # この範囲にある全シナプス
+        syns_in_range = [d for d in exc_dists if lower <= d < upper]
+        # この範囲にある、シナプスを持つユニークなセグメント
+        segs_in_range = {s for s in exc_segs if lower <= h.distance(s) < upper}
+        
+        if len(syns_in_range) > 0:
+            bar = "#" * int(len(syns_in_range) / len(self.exc_syn_list) * 40)
+            print(f"{lower:4.0f}-{upper:4.0f} um: {bar}")
+            print(f"    -> Synapses: {len(syns_in_range)}, Segments: {len(segs_in_range)}")
+
+
+
 class neuronalreservoir():
-    def __init__(self, cell, datagenerator, prng, params):
+    def __init__(self, cell, prng, params):
         # instantialize neuron
         self.cell = cell
         #nrn.v_init = -70 * mV
         nrn.celsius = 36
         #nrn.dt = 0.005 * ms
-
-        self.datagenerator = datagenerator
 
         self.bin_width   = params['bin_width']
         self.num_states = params['num_states']
@@ -23,13 +71,7 @@ class neuronalreservoir():
         self.exc_syn_weight       = params['exc_syn_weight']
         self.exc_syn_tau1         = params['exc_syn_tau1']
         self.exc_syn_tau2         = params['exc_syn_tau2']
-        self.syn_mechanisms         = params['syn_mechanisms']
-
-        self.inh_num_syns         = params['inh_num_syns']
-        self.inh_num_synchro_syns = params['inh_num_synchro_syns']
-        self.inh_syn_weight       = params['inh_syn_weight']
-        self.inh_syn_tau1         = params['inh_syn_tau1']
-        self.inh_syn_tau2         = params['inh_syn_tau2']
+        self.syn_mechanisms       = params['syn_mechanisms']
 
         self.reg = params['reg']
         self.cell = cell
@@ -40,21 +82,81 @@ class neuronalreservoir():
 
         self.prng = prng
         self.W = self.prng.random(self.num_states+1)# readout weight
-
-        self.create_synapses()
-        self.connect_synapses()
+        
+        self._build_network()
         self.create_records()
 
+    def _build_network(self):
+        self._create_synapses()
+        self._connect_synapses()
 
-    def create_synapses(self):
-        if self.syn_mechanisms=='ionotropic':
-            self.datagenerator.create_synapses(self.cell)
-        elif self.syn_mechanisms=='ionotropic_and_metabotropic':
-            self.datagenerator.create_synapses(self.cell, self.ip3, self.cyt)
+    def _create_synapses(self):
+        test_distance_accuracy(self, cell)
+        # 距離計算の基準点（細胞体）を設定
+        nrn.distance(0, 0.5, sec=cell.soma[0]) 
+        #nrn.distance(cell.soma[0](0.5))
+        all_segs = []
+        areas = []
+        distances = []
 
-    def connect_synapses(self):
-        self.datagenerator.connect_synapses()
+        # 1. 全セグメントの情報を収集
+        for sec in get_dend_and_soma(cell):
+            for seg in sec:
+                all_segs.append(seg)
+                areas.append(seg.area())
+                distances.append(nrn.distance(seg))
 
+        areas = np.array(areas)
+        weights = np.zeros(areas.shape)
+        distances = np.array(distances)
+
+        # 2. 条件に応じた重み付け
+        if condition == "distal-dense":  # 遠位に密集
+            mu = 600.0  # 遠く（細胞の最大長に合わせて調整）
+            sigma = 100.0
+            weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
+            
+        elif condition == "proximal-dense":  # 近位に密集
+            mu = 0.0   # 細胞体に近い
+            sigma = 100.0
+            weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
+        elif condition == "proximal-sparse":  # 近位に密集
+            mu = 000.0   # 細胞体に近い
+            sigma = 300.0
+            weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
+        elif condition == "distal-sparse":  # 遠位に密集
+            mu = 600.0  # 遠く（細胞の最大長に合わせて調整）
+            sigma = 300.0
+            weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
+            
+        elif condition == "random":  # 面積に比例した一様分布
+            weights = areas
+
+        # 3. 重みの正規化（合計を1にする）
+        prob = weights / np.sum(weights)
+
+        # 4. シナプスの配置（興奮性を例に）
+        # 重みに基づいてセグメントをランダムに選択
+        chosen_indices = self.prng.choice(len(all_segs), size=self.exc_num_syn, p=prob)
+
+        self.exc_syn_list = []
+        for idx in chosen_indices:
+            seg = all_segs[idx]
+            syn = nrn.Exp2Syn(seg)
+            # --- パラメータ設定 ---
+            syn.tau1 = self.exc_syn_tau1
+            syn.tau2 = self.exc_syn_tau2
+            syn.e = -10.0
+            self.exc_syn_list.append(syn)
+
+        check_synapse_stats(self)
+
+    def _connect_synapses(self):
+        self.exc_nc_list = []
+        for syn in self.exc_syn_list:
+            nc_tosyn = nrn.NetCon(None, syn)
+            nc_tosyn.weight[0] = self.exc_syn_weight
+            self.exc_nc_list.append(nc_tosyn)
 
     def resister_inputevent_toNetCon(self):
         self.datagenerator.resister_inputevent_toNetCon()
