@@ -137,7 +137,7 @@ from lyon.calc import LyonCalc
 import librosa
 
 class TI46word_datagenerator(datagenerator):
-    def __init__(self, params, prng, trainseq_code=None, testseq_code=None, path_to_dataset="../dataset/ti46/ti20/"):
+    def __init__(self, params, prng, trainseq_code=None, testseq_code=None, path_to_dataset="./dataset/ti46/ti20/"):
         self.prng = prng
 
         self.exc_num_syn          = params['exc_num_syn']
@@ -257,10 +257,10 @@ class TI46word_datagenerator(datagenerator):
         calc = LyonCalc()
         coch = calc.lyon_passive_ear(waveform, sr, self.decimation_factor)
         time_coch = np.arange(coch.shape[0]) * bin_width
-        return time_coch, coch, 
+        return time_coch, coch
 
     def generate_data(self, data_idx, mode):
-        if mode=="training":
+        if mode=="train":
             prompt  = self.trainseq_promptcode[data_idx]
             speaker = self.trainseq_speakercode[data_idx]
             session = self.trainseq_sessioncode[data_idx]
@@ -317,7 +317,7 @@ class TI46word_datagenerator(datagenerator):
         for synapse_idx, spike_train in enumerate(spike_trains):
             for spike_time in spike_train:
                 spike_time = self.bin_width * sum(self.len_data[:-1]) + spike_time
-                self.exc_nc_list[synapse_idx].event(spike_time)
+                #self.exc_nc_list[synapse_idx].event(spike_time)
         return spike_trains
 
 
@@ -479,7 +479,7 @@ class RandomPattern_datagenerator(datagenerator):
         #pass
 
     def generate_data(self, data_idx, mode):
-        if mode=="training":
+        if mode=="train":
             self.len_data.append(int(self.pattern_duration_ms / self.bin_width))
             label_idx = data_idx
             self.trainingdata_target = np.concatenate([self.trainingdata_target, self.generate_target_within_batch(data_idx,  label_idx)], axis=1)
@@ -549,5 +549,5 @@ class RandomPattern_datagenerator(datagenerator):
 
         for spike_time, synapse_idx in spike_trains:
             abs_time = offset_time + spike_time
-            self.exc_nc_list[int(synapse_idx)].event(abs_time)
+            #self.exc_nc_list[int(synapse_idx)].event(abs_time)
         return spike_trains

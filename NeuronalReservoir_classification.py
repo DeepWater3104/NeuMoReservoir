@@ -589,7 +589,7 @@ if __name__ == '__main__':
         params['batches_to_save_mode'].append("test")
 
     #datagenerator = TI46word_datagenerator(params, prng, trainseq_code, testseq_code, "../../../NEURON_implementation/dataset/ti46/ti20/")
-    datagenerator = TI46word_datagenerator(params, prng, trainseq_code, testseq_code, "../dataset/ti46/ti20/")
+    datagenerator = TI46word_datagenerator(params, prng, trainseq_code, testseq_code, "./dataset/ti46/ti20/")
     params['bin_width'] = datagenerator.bin_width
 
     import sys
