@@ -58,17 +58,12 @@ class neuronalreservoir():
     def __init__(self, cell, prng, params):
         # instantialize neuron
         self.cell = cell
-        #nrn.v_init = -70 * mV
         nrn.celsius = 36
-        #nrn.dt = 0.005 * ms
 
         self.bin_width   = params['bin_width']
         self.num_states = params['num_states']
         self.record_target = params['record_target']
 
-        self.exc_num_syns         = params['exc_num_syns']
-        self.exc_num_synchro_syns = params['exc_num_synchro_syns']
-        self.exc_syn_weight       = params['exc_syn_weight']
         self.exc_syn_tau1         = params['exc_syn_tau1']
         self.exc_syn_tau2         = params['exc_syn_tau2']
         self.condition            = params['condition']
@@ -209,7 +204,6 @@ class neuronalreservoir():
         t_rec = np.array(t_rec)
         bin_index = 0
         temp_sum = np.zeros(self.datagenerator.len_transientdata + self.datagenerator.len_trainingdata+self.datagenerator.len_testdata)
-        #temp_num = np.zeros(self.datagenerator.len_transientdata + self.datagenerator.len_trainingdata+self.datagenerator.len_testdata)
 
         for t_index, t in enumerate(t_rec):
             bin_index = math.floor(t/self.bin_width)
@@ -224,8 +218,6 @@ class neuronalreservoir():
         output = temp_sum / self.bin_width
 
         return np.transpose(output)
-
-        raise NotImplementedError("bin_average() is not implemented.")
 
     def get_state_variables(self):
         state_variables = np.column_stack([self.bin_average(v_rec.to_python(), self.t_rec.to_python()) for v_rec in self.v_rec_list])
