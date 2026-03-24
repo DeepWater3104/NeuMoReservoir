@@ -155,12 +155,10 @@ class neuronalreservoir():
             nc_tosyn.weight[0] = self.exc_syn_weight
             self.exc_nc_list.append(nc_tosyn)
 
-    def _resister_inputevent_toNetCon(self):
-        for synapse_idx, spike_train in enumerate(spike_trains):
-            for spike_time in spike_train:
-                self.exc_nc_list[synapse_idx].event(spike_time)
+    def resister_inputevent_toNetCon(self):
+        self.datagenerator.resister_inputevent_toNetCon()
 
-    def _create_records(self):
+    def create_records(self):
         self.t_rec = nrn.Vector().record(nrn._ref_t)
 
         if self.record_target == 'potential':
@@ -200,11 +198,10 @@ class neuronalreservoir():
                         else:
                             break
 
-    def generate_dynamics(self, spike_train, total_duration):
-        self.resister_inputevent_toNetCon(spike_train)
-        nrn.continuerun( total_duration * ms)
+
 
     def bin_average(self, v_rec, t_rec):
+        # t_rec[0] is not always 0.0
         v_rec = np.array(v_rec)
         t_rec = np.array(t_rec)
         bin_index = 0
@@ -221,20 +218,167 @@ class neuronalreservoir():
             else:
                 temp_sum[bin_index] += v_rec[t_index] * (t_rec[t_index+1]-t)
 
+
+
+            #temp_sum[math.floor(t/self.bin_width)] += v_rec[t_index]
+            #temp_num[math.floor(t/self.bin_width)] += 1
+
+        #output = np.where(temp_num == 0, -1,  temp_sum / self.bin_width) # insert -1 when they had no t_rec in a bin
         output = temp_sum / self.bin_width
 
         return np.transpose(output)
 
-        raise NotImplementedError("bin_average() is not implemented.")
 
-    def get_state_variables(self):
-        state_variables = np.column_stack([self.bin_average(v_rec.to_python(), self.t_rec.to_python()) for v_rec in self.v_rec_list])
-        return state_variables
+    def get_all_state_variables(self):
+        # count number of data points in a single bin
+        bin_avg_list = np.column_stack([self.bin_average(v_rec.to_python(), self.t_rec.to_python()) for v_rec in self.v_rec_list])
+        
+        return bin_avg_list
 
-    def readout(self):
-        state_variables = self.get_state_variables()
-        return state_variables @ self.W
+    def get_transient_state_variables(self):
+        bin_avg_list = np.column_stack([self.bin_average(v_rec.to_python(), self.t_rec.to_python()) for v_rec in self.v_rec_list])
+        
+        return bin_avg_list[:self.datagenerator.len_transientdata]
+    
+
+    def get_training_state_variables(self):
+        # take average within a bin which is only after generated transient period
+        bin_avg_list = np.column_stack([self.bin_average(v_rec.to_python(), self.t_rec.to_python()) for v_rec in self.v_rec_list])
+
+        # exclude transient data
+        bin_avg_list = bin_avg_list[self.datagenerator.len_transientdata:self.datagenerator.len_transientdata+self.datagenerator.len_trainingdata]
+        
+        return bin_avg_list
+
+    def get_test_state_variables(self):
+        bin_avg_list = np.column_stack([self.bin_average(v_rec.to_python(), self.t_rec.to_python()) for v_rec in self.v_rec_list])
+        bin_avg_list = bin_avg_list[self.datagenerator.len_transientdata+self.datagenerator.len_trainingdata:]
+
+        return bin_avg_list
+
+    def readout_transient(self):
+        state_vars = np.concatenate( (self.get_transient_state_variables(), np.ones((self.datagenerator.len_transientdata,1))), axis=1 )
+        return state_vars @ self.W
+
+
+    def readout_training(self):
+        state_vars = np.concatenate( (self.get_training_state_variables(), np.ones((self.datagenerator.len_trainingdata,1))), axis=1 )
+        return state_vars @ self.W
+
+    def readout_test(self):
+        state_vars = np.concatenate( (self.get_test_state_variables(), np.ones((self.datagenerator.len_testdata,1))), axis=1 )
+        return state_vars @ self.W
+
+
 
     def optimize(self):
-        state_variables = np.concatenate( (self.get_training_state_variables(), np.ones((self.datagenerator.len_trainingdata,1))), axis=1 )
+        state_vars = np.concatenate( (self.get_training_state_variables(), np.ones((self.datagenerator.len_trainingdata,1))), axis=1 )
         self.W = np.linalg.inv(np.transpose(state_vars) @ state_vars + self.reg*np.eye(self.num_states+1)) @ np.transpose(state_vars) @ self.datagenerator.trainingdata_target
+
+    def generate_response(self):
+        nrn.finitialize(-65 * mV)
+        # resister input event
+        self.resister_inputevent_toNetCon()
+        #print('transient period duration', self.datagenerator.len_transientdata*self.bin_width, 'ms')
+        #print('run for', len(self.datagenerator.get_inputdata()) * self.bin_width, 'ms')
+        nrn.continuerun( len(self.datagenerator.get_inputdata()) * self.bin_width * ms)
+
+
+if __name__ == '__main__':
+    import NeuronalReservoir_params
+    from DataGenerator import sin_datagenerator, MackeyGlass_datagenerator
+    from sklearn.metrics import mean_squared_error
+    params = NeuronalReservoir_params.params
+
+    prng = np.random.default_rng(1234)
+    #prng = np.random.default_rng(123)
+
+    freq = 0.01
+    sinwave = sin_datagenerator(params, freq, prng)
+    #mgdata = MackeyGlass_datagenerator(params, prng)
+
+    # CA1 pyramidal
+    from CA1pyramidal import CA1Pyramidal
+    cell = CA1Pyramidal()
+
+    # purkinje
+    #from Purkinje import Purkinje
+    #cell = Purkinje()
+
+    # CA3 pyramidal
+    #from CA3pyramidal import CA3Pyramidal
+    #cell = CA3Pyramidal(STDP=False)
+
+
+    reservoir = neuronalreservoir(cell, sinwave, prng, params)
+    #reservoir = neuronalreservoir(cell, mgdata, prng, params)
+
+    #print('"       mean interval of input data            "', np.mean(np.abs(np.diff(mgdata.get_inputdata()))))
+    print('"       mean interval of input data            "', np.mean(np.abs(np.diff(sinwave.get_inputdata()))))
+    print('"resolution of data-synapse correspondence(exc)"', reservoir.datagenerator.exc_dataresolution)
+    print('"resolution of data-synapse correspondence(inh)"', reservoir.datagenerator.inh_dataresolution)
+    reservoir.generate_response()
+
+    output_transient = reservoir.readout_transient()
+
+    reservoir.optimize()
+    print(reservoir.W[reservoir.num_states])
+
+    output_aftertraining_training = reservoir.readout_training()
+    output_aftertraining_test = reservoir.readout_test()
+
+    print('" training MSE "', mean_squared_error(output_aftertraining_training, reservoir.datagenerator.trainingdata_target))
+    print('" test MSE     "', mean_squared_error(output_aftertraining_test, reservoir.datagenerator.testdata_target))
+
+
+    # plot membrane pontential
+    from matplotlib import pyplot as plt
+    fig = plt.figure(figsize=(16,6))
+    ax1 = fig.add_subplot(4, 1, 1)
+    #v_rec_list = np.empty((0, 0))
+    #for v in reservoir.v_rec_list:
+    #    v_rec_list = np.concatenate(( v_rec_list, np.array(v.to_python()).reshape(len(v.to_python()),1) ), axis=1)
+
+    #print(np.shape(v_rec_list))
+
+    #ax1.pcolor(np.array(reservoir.t_rec.to_python()), v_rec_list)
+    #ax1.pcolor(v_rec_list)
+    for v_rec in reservoir.v_rec_list:
+        ax1.plot(reservoir.t_rec, v_rec)
+    ax1.set_ylabel('V[mV]')
+    ax1.get_xaxis().set_visible(False)
+
+    ax2 = fig.add_subplot(4, 1, 2)
+    exc_sum_syncurrent = reservoir.get_sum_syncurrent('exc')
+    inh_sum_syncurrent = reservoir.get_sum_syncurrent('inh')
+    ax2.plot(reservoir.t_rec, exc_sum_syncurrent, label='sum of exc synaptic current')
+    ax2.plot(reservoir.t_rec, inh_sum_syncurrent, label='sum of inh synaptic current')
+    ax2.set_ylabel('synaptic current')
+    ax2.legend()
+    ax2.get_xaxis().set_visible(False)
+
+    ax3 = fig.add_subplot(4, 1, 3)
+    ax3.plot(reservoir.datagenerator.t, reservoir.datagenerator.get_inputdata(), label='input data')
+    ax3.set_ylabel('input')
+    ax3.get_xaxis().set_visible(False)
+
+    ax4 = fig.add_subplot(4, 1, 4)
+    #ax4.plot(reservoir.datagenerator.t[int(reservoir.datagenerator.len_transientdata):], reservoir.datagenerator.get_targetdata(), label='ground truth')
+    #ax4.plot(reservoir.datagenerator.t[int(reservoir.datagenerator.len_transientdata):int(reservoir.datagenerator.len_transientdata+reservoir.datagenerator.len_trainingdata)], output_aftertraining_training, label='prediction on training set')
+    #ax4.plot(reservoir.datagenerator.t[int(reservoir.datagenerator.len_transientdata+reservoir.datagenerator.len_trainingdata):], output_aftertraining_test, label='prediction on test set')
+    ax4.plot(reservoir.datagenerator.t[int(reservoir.datagenerator.len_transientdata):], reservoir.datagenerator.get_targetdata())
+    ax4.plot(reservoir.datagenerator.t[int(reservoir.datagenerator.len_transientdata):int(reservoir.datagenerator.len_transientdata+reservoir.datagenerator.len_trainingdata)], output_aftertraining_training)
+    ax4.plot(reservoir.datagenerator.t[int(reservoir.datagenerator.len_transientdata+reservoir.datagenerator.len_trainingdata):], output_aftertraining_test)
+ 
+    ax4.set_ylim(min(reservoir.datagenerator.get_inputdata()), max(reservoir.datagenerator.get_inputdata()))
+    ax4.set_ylabel('output')
+    ax4.set_xlabel('Time[ms]')
+    ax4.legend()
+
+    ax1.set_xlim((reservoir.datagenerator.len_transientdata+reservoir.datagenerator.len_trainingdata/2)*reservoir.bin_width, (reservoir.datagenerator.len_transientdata+reservoir.datagenerator.len_trainingdata+reservoir.datagenerator.len_testdata)*reservoir.bin_width )
+    ax2.set_xlim((reservoir.datagenerator.len_transientdata+reservoir.datagenerator.len_trainingdata/2)*reservoir.bin_width, (reservoir.datagenerator.len_transientdata+reservoir.datagenerator.len_trainingdata+reservoir.datagenerator.len_testdata)*reservoir.bin_width )
+    ax3.set_xlim((reservoir.datagenerator.len_transientdata+reservoir.datagenerator.len_trainingdata/2)*reservoir.bin_width, (reservoir.datagenerator.len_transientdata+reservoir.datagenerator.len_trainingdata+reservoir.datagenerator.len_testdata)*reservoir.bin_width )
+    ax4.set_xlim((reservoir.datagenerator.len_transientdata+reservoir.datagenerator.len_trainingdata/2)*reservoir.bin_width, (reservoir.datagenerator.len_transientdata+reservoir.datagenerator.len_trainingdata+reservoir.datagenerator.len_testdata)*reservoir.bin_width )
+
+    plt.tight_layout()
+    plt.savefig("output.png")

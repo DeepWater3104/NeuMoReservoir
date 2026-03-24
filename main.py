@@ -87,26 +87,7 @@ def main(cfg: DictConfig):
     params['bin_width'] = datagenerator.bin_width
     print(f"DataGenerator initialized with bin_width: {params['bin_width']} ms")
 
-    ## --- Debugging Data Access ---
-    #import os
-    #
-    ## Check if the directory itself is visible
-    #dataset_path = datagenerator.path_to_dataset
-    #print(f"Checking directory: {os.path.abspath(dataset_path)}")
-    #if os.path.exists(dataset_path):
-    #    print(f"Directory exists. Contents (first 5): {os.listdir(dataset_path)[:5]}")
-    #else:
-    #    print("ERROR: Directory does not exist at the specified path.")
-    #
-    ## Check the first file the generator will try to access
-    ## Assuming the format is something like 'f1_01_1.wav'
-    #print(f'debug: {len(train_code)}')
-    #sample_code = train_code[0]
-    #print(f"First training sample codes: {sample_code}")
-
-
     spike_trains = datagenerator.get_spike_trains(data_idx=0, mode='train')
-    print(spike_trains)
 
 if __name__ == "__main__":
     main()
