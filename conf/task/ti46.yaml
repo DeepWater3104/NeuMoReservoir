@@ -3,6 +3,7 @@ name: "ti46"
 n_repetition: 5
 num_outputs: 10
 exc_num_syn: 78               # Added: Required by DataGenerator
+exc_syn_weight: 0.001            # Added: Required by DataGenerator
 maximum_firing_rate: 10
 decimation_factor: 64         # Added: Required for audio processing
 sampling_frequency: 12500     # Added: Required for audio processing

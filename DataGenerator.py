@@ -29,13 +29,7 @@ class datagenerator():
         self.exc_num_syn          = params['exc_num_syn']
         self.exc_num_synchro_syns = params['exc_num_synchro_syns']
         self.exc_syn_weight       = params['exc_syn_weight']
-        self.exc_syn_tau1         = params['exc_syn_tau1']
-        self.exc_syn_tau2         = params['exc_syn_tau2']
         self.inh_num_syns         = params['inh_num_syns']
-        self.inh_num_synchro_syns = params['inh_num_synchro_syns']
-        self.inh_syn_weight       = params['inh_syn_weight']
-        self.inh_syn_tau1         = params['inh_syn_tau1']
-        self.inh_syn_tau2         = params['inh_syn_tau2']
 
         self.t = self.bin_width*np.arange(self.len_transientdata+self.len_trainingdata+self.len_testdata)
 
@@ -142,15 +136,8 @@ class TI46word_datagenerator(datagenerator):
 
         self.exc_num_syn          = params['exc_num_syn']
         self.exc_syn_weight       = params['exc_syn_weight']
-        self.exc_syn_tau1         = params['exc_syn_tau1']
-        self.exc_syn_tau2         = params['exc_syn_tau2']
 
         self.maximum_firing_rate = params['maximum_firing_rate']
-
-        self.inh_num_syns         = params['inh_num_syns']
-        self.inh_syn_weight       = params['inh_syn_weight']
-        self.inh_syn_tau1         = params['inh_syn_tau1']
-        self.inh_syn_tau2         = params['inh_syn_tau2']
 
         self.mGluR_stim_train_idx = 0
         self.mGluR_stim_train = []
@@ -335,10 +322,7 @@ class RandomPattern_datagenerator(datagenerator):
         # --- NEURON Synapse Parameters (継承) ---
         self.exc_num_syn          = params['exc_num_syn']
         self.exc_syn_weight       = params['exc_syn_weight']
-        self.exc_syn_tau1         = params['exc_syn_tau1']
-        self.exc_syn_tau2         = params['exc_syn_tau2']
-
-        self.firing_rate = params['firing_rate']
+        self.firing_rate          = params['firing_rate']
 
         self.inh_num_syns         = params['inh_num_syns']
         self.inh_syn_weight       = params['inh_syn_weight']

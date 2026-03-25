@@ -53,10 +53,8 @@ def check_synapse_stats(self):
             print(f"    -> Synapses: {len(syns_in_range)}, Segments: {len(segs_in_range)}")
 
 
-
 class neuronalreservoir():
     def __init__(self, cell, prng, params):
-        # instantialize neuron
         self.cell = cell
         nrn.celsius = 36
 
@@ -199,34 +197,56 @@ class neuronalreservoir():
         self.resister_inputevent_toNetCon(spike_train)
         nrn.continuerun( total_duration * ms)
 
-    def bin_average(self, v_rec, t_rec):
-        v_rec = np.array(v_rec)
-        t_rec = np.array(t_rec)
-        bin_index = 0
-        temp_sum = np.zeros(self.datagenerator.len_transientdata + self.datagenerator.len_trainingdata+self.datagenerator.len_testdata)
+    #def bin_average(self, v_rec, t_rec):
+    #    v_rec = np.array(v_rec)
+    #    t_rec = np.array(t_rec)
+    #    bin_index = 0
+    #    temp_sum = np.zeros(self.datagenerator.len_transientdata + self.datagenerator.len_trainingdata+self.datagenerator.len_testdata)
 
-        for t_index, t in enumerate(t_rec):
-            bin_index = math.floor(t/self.bin_width)
-            if (self.datagenerator.len_transientdata + self.datagenerator.len_trainingdata+self.datagenerator.len_testdata) <= bin_index:
-                break
+    #    for t_index, t in enumerate(t_rec):
+    #        bin_index = math.floor(t/self.bin_width)
+    #        if (self.datagenerator.len_transientdata + self.datagenerator.len_trainingdata+self.datagenerator.len_testdata) <= bin_index:
+    #            break
 
-            if (t_index+1) == len(t_rec):
-                temp_sum[bin_index] += v_rec[t_index] * (len(self.datagenerator.get_inputdata()) * self.bin_width - t)
-            else:
-                temp_sum[bin_index] += v_rec[t_index] * (t_rec[t_index+1]-t)
+    #        if (t_index+1) == len(t_rec):
+    #            temp_sum[bin_index] += v_rec[t_index] * (len(self.datagenerator.get_inputdata()) * self.bin_width - t)
+    #        else:
+    #            temp_sum[bin_index] += v_rec[t_index] * (t_rec[t_index+1]-t)
 
-        output = temp_sum / self.bin_width
+    #    output = temp_sum / self.bin_width
 
-        return np.transpose(output)
+    #    return np.transpose(output)
 
-    def get_state_variables(self):
-        state_variables = np.column_stack([self.bin_average(v_rec.to_python(), self.t_rec.to_python()) for v_rec in self.v_rec_list])
-        return state_variables
+    def get_binned_states(self, start_bin, end_bin):
+        """
+        start_binからend_binまでの状態量を計算する共通メソッド
+        """
+        # 1. 必要な時間範囲を特定 (ベクトル演算で高速化)
+        t_start = start_bin * self.bin_width
+        t_end = (end_bin + 1) * self.bin_width
+        
+        # 範囲内のインデックスを抽出
+        mask = (self.t_rec >= t_start) & (self.t_rec < t_end)
+        v_slice = self.v_rec[:, mask]
+        t_slice = self.t_rec[mask]
+    
+        # 2. 各Binへの割り当て（np.digitizeを使用）
+        bin_indices = ((t_slice - t_start) // self.bin_width).astype(int)
+        
+        # 3. 時間重み付き和の計算 (t_{i+1} - t_i)
+        dt = np.diff(t_slice, append=t_slice[-1] + (t_slice[-1]-t_slice[-2]))
+        weighted_v = v_slice * dt
+        
+        # 4. Binごとに集約 (np.add.at または bincount)
+        num_bins = end_bin - start_bin + 1
+        res = np.zeros((self.num_states, num_bins))
+        for i in range(self.num_states):
+            res[i] = np.bincount(bin_indices, weights=weighted_v[i], minlength=num_bins)[:num_bins]
+            
+        return res / self.bin_width
 
     def readout(self):
-        state_variables = self.get_state_variables()
-        return state_variables @ self.W
+        return self.state_variables @ self.W
 
-    def optimize(self):
-        state_variables = np.concatenate( (self.get_training_state_variables(), np.ones((self.datagenerator.len_trainingdata,1))), axis=1 )
-        self.W = np.linalg.inv(np.transpose(state_vars) @ state_vars + self.reg*np.eye(self.num_states+1)) @ np.transpose(state_vars) @ self.datagenerator.trainingdata_target
+    def optimize(self, state_vars, target):
+        self.W = np.linalg.inv(np.transpose(state_vars) @ state_vars + self.reg*np.eye(self.num_states)) @ np.transpose(state_vars) @ target
