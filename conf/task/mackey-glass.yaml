@@ -1,3 +1,7 @@
 # Task-specific parameters for Mackey-Glass prediction
 name: "mackey-glass"
-
+datagenerator_type: "MackeyGlass_datagenerator"
+len_transientdata: 100, # shold be decided using transient period
+len_trainingdata: 1000,
+len_testdata: 300,
+len_delay: 30  #    for discrete   time system

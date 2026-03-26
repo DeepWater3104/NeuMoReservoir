@@ -1,3 +1,13 @@
 # Task-specific parameters for Sinusoidal wave prediction
 name: "sinwave"
+datagenerator_type: "sin_datagenerator"
+freq: 0.01
+bin_width: 0.5
+len_transientdata: 100 # shold be decided using transient period
+len_trainingdata: 1000
+len_testdata: 300
+time_delay: 0 # ms for continuous time system
 
+exc_num_syn: 50                 # Added: Required by DataGenerator
+exc_syn_weight: 0.0001          # Added: Required by DataGenerator
+exc_num_synchro_syns: 4         # expected to be an even number

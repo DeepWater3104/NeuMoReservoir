@@ -49,45 +49,70 @@ def main(cfg: DictConfig):
         cell = getattr(nrn, template_name)(cell_dir + "morphology", morph_path.name)
 
 
-    # --- 3. DataGenerator Setup ---
-    # Import the speaker-specific dataset codes from TI46Subset.py
-    from TI46Subset import trainseq_code, testseq_code
-    from DataGenerator import TI46word_datagenerator
-    
-    # Create copies of the original lists to avoid mutating global variables
-    train_code = trainseq_code.copy()
-    test_code = testseq_code.copy()
-    
-    # Implement dataset repetition and shuffling logic here
-    # These functions were originally in your classification scripts
-    from NeuronalReservoir_classification import repeat_dataset_codes, shuffle_dataset_codes_numpy
-    
-    # Repeat and shuffle training data
-    # Accessing 'n_repetition' from the task-specific YAML configuration
-    print(f"--- Preparing training data (Repetition: {params['task']['n_repetition']}x) ---")
-    train_code = repeat_dataset_codes(train_code, n_times=params['task']['n_repetition'])
-    train_code = shuffle_dataset_codes_numpy(train_code, prng)
-    
-    # Repeat and shuffle test data
-    print(f"--- Preparing test data (Repetition: {params['task']['n_repetition']}x) ---")
-    test_code = repeat_dataset_codes(test_code, n_times=params['task']['n_repetition'])
-    test_code = shuffle_dataset_codes_numpy(test_code, prng)
+    # --- 3. DataGenerator Type Specific Setup ---
+    if params['task']['datagenerator_type'] == "TI46word_datagenerator":
+        # Import the speaker-specific dataset codes from TI46Subset.py
+        from TI46Subset import trainseq_code, testseq_code
+        from DataGenerator import TI46word_datagenerator
+        
+        # Create copies of the original lists to avoid mutating global variables
+        train_code = trainseq_code.copy()
+        test_code = testseq_code.copy()
+        
+        # Implement dataset repetition and shuffling logic here
+        # These functions were originally in your classification scripts
+        from NeuronalReservoir_classification import repeat_dataset_codes, shuffle_dataset_codes_numpy
+        
+        # Repeat and shuffle training data
+        # Accessing 'n_repetition' from the task-specific YAML configuration
+        print(f"--- Preparing training data (Repetition: {params['task']['n_repetition']}x) ---")
+        train_code = repeat_dataset_codes(train_code, n_times=params['task']['n_repetition'])
+        train_code = shuffle_dataset_codes_numpy(train_code, prng)
+        
+        # Repeat and shuffle test data
+        print(f"--- Preparing test data (Repetition: {params['task']['n_repetition']}x) ---")
+        test_code = repeat_dataset_codes(test_code, n_times=params['task']['n_repetition'])
+        test_code = shuffle_dataset_codes_numpy(test_code, prng)
 
-    # Instantiate the data generator
-    # path_to_dataset should eventually be moved to your YAML config
-    datagenerator = TI46word_datagenerator(
-        params=params['task'],
-        prng=prng,
-        trainseq_code=train_code,
-        testseq_code=test_code,
-        path_to_dataset="./dataset/ti46/ti20/"
-    )
-    
-    # Synchronize bin_width from datagenerator to the global params
-    params['bin_width'] = datagenerator.bin_width
-    print(f"DataGenerator initialized with bin_width: {params['bin_width']} ms")
+        # Instantiate the data generator
+        # path_to_dataset should eventually be moved to your YAML config
+        datagenerator = TI46word_datagenerator(
+            params=params['task'],
+            prng=prng,
+            trainseq_code=train_code,
+            testseq_code=test_code,
+            path_to_dataset="./dataset/ti46/ti20/"
+        )
+        
+        # Synchronize bin_width from datagenerator to the global params
+        params['bin_width'] = datagenerator.bin_width
+        print(f"DataGenerator initialized with bin_width: {params['bin_width']} ms")
 
-    spike_trains = datagenerator.get_spike_trains(data_idx=0, mode='train')
+        spike_trains = datagenerator.get_spike_trains(data_idx=0, mode='train')
+    elif params['task']['datagenerator_type'] == "sin_datagenerator":
+        from DataGenerator import sin_datagenerator
+        
+        print(f"--- Preparing Sine Wave Data (Frequency: {params['task']['freq']} Hz) ---")
+        
+        # 正弦波ジェネレータの初期化
+        # params['task'] に freq や bin_width が含まれている想定です
+        datagenerator = sin_datagenerator(
+            params=params['task'],
+            freq=params['task']['freq'],
+            prng=prng
+        )
+        
+        # bin_width の同期（必要であれば）
+        params['bin_width'] = datagenerator.bin_width
+        print(f"DataGenerator initialized for Sine Wave: {params['bin_width']} ms bins")
 
+        from NeuronalReservoir_prediction import neuronalreservoir_prediction
+        neuronalreservoir = neuronalreservoir_prediction(cell, prng, params)
+
+        # 動作確認用に最初のスパイクを取得してみる
+        # 正弦波予測の場合、data_idx は通常 0 のみか、あるいは無視される設計が多いです
+        spike_trains = datagenerator.get_spike_trains()
+        print(spike_trains)
+        neuronalreservoir.resister_spike_events(spike_trains)
 if __name__ == "__main__":
     main()

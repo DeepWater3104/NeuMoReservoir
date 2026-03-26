@@ -1,24 +1,21 @@
 from neuron import h as nrn
+from NeuronalReservoir import neuronalreservoir
 from neuron.units import ms, mV
 import numpy as np
 import math
 nrn.load_file("stdrun.hoc")
 
-class neuronalreservoir_prediction():
+class neuronalreservoir_prediction(neuronalreservoir):
     def __init__(self, cell, prng, params):
-        super().__init__()
-        # instantialize neuron
-        self.cell = cell
-        nrn.celsius = 36
+        self.exc_num_synchro_syns = params['task']['exc_num_synchro_syns']
+        self.exc_num_syn          = params['task']['exc_num_syn']
+        self.exc_syn_weight       = params['task']['exc_syn_weight']
+        super().__init__(cell, prng, params)
 
-        self.exc_num_syns         = params['exc_num_syns']
-        self.exc_num_synchro_syns = params['exc_num_synchro_syns']
-        self.exc_syn_weight       = params['exc_syn_weight']
 
 if __name__ == '__main__':
     from DataGenerator import sin_datagenerator, MackeyGlass_datagenerator
     from sklearn.metrics import mean_squared_error
-    params = NeuronalReservoir_params.params
 
     prng = np.random.default_rng(1234)
     #prng = np.random.default_rng(123)

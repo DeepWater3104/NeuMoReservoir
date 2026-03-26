@@ -1,6 +1,6 @@
 # Default configurations for the reservoir simulation
 defaults:
-  - task: ti46
+  - task: sinwave
   - _self_
 
 # Shared parameters across different tasks and models
@@ -13,3 +13,4 @@ seed: 1234                    # Random seed for reproducibility
 exc_syn_weight: 0.0005
 exc_syn_tau1: 1               # Added: Required for synapse initialization
 exc_syn_tau2: 5               # Added: Required for synapse initialization
+condition: "distal-dense"

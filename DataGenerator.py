@@ -2,22 +2,48 @@ import numpy as np
 from neuron import h as nrn
 from neuron.units import ms, mV
 
-def resister_inputevent_toNetCon_toydata(self):
-    for data_index, data in enumerate(self.get_inputdata()):
-        time = self.bin_width * data_index  
-        
-        # search for corresponding synapse
-        for nc_index, nc in enumerate(self.exc_nc_list):
-            if self.dataexcsyn_dict[nc_index]['min'] <= data and data < self.dataexcsyn_dict[nc_index]['max']:
-                # only when the data is within range, resister event at time
-                #print(time)
-                nc.event(time) # need to be verified
+def create_receptive_field(self):
+    self.dataexcsyn_dict = []
+    self.exc_dataresolution = (max(self.get_inputdata()) - min(self.get_inputdata())) / (self.exc_num_syn - self.exc_num_synchro_syns+1)
+    for i in range(self.exc_num_syn):
+        minimum = i * self.exc_dataresolution + min(self.get_inputdata()) - (self.exc_num_synchro_syns-1)*self.exc_dataresolution
+        maximum = (i+1)*self.exc_dataresolution + min(self.get_inputdata())
 
-        for nc_index, nc in enumerate(self.inh_nc_list):
-            if self.datainhsyn_dict[nc_index]['min'] <= data and data < self.datainhsyn_dict[nc_index]['max']:
-                # only when the data is within range, resister event at time
-                #print(time)
-                nc.event(time) # need to be verified
+        # care about the boundary condition
+        data_range = {'min': minimum, 'max': maximum}
+        self.dataexcsyn_dict.append(data_range)
+
+def get_spike_trains_receptive_field(self):
+    # 1. 全入力データと時間の配列を準備
+    input_data = np.array(list(self.get_inputdata()))
+    times = np.arange(len(input_data)) * self.bin_width
+    
+    spike_times = []
+    neuron_indices = []
+
+    # 2. 各ニューロン（受容野）ごとに該当するデータを一括抽出
+    for synapse_idx in range(self.exc_num_syn):
+        lower = self.dataexcsyn_dict[synapse_idx]['min']
+        upper = self.dataexcsyn_dict[synapse_idx]['max']
+        
+        # 条件に合致するインデックスを特定
+        mask = (input_data >= lower) & (input_data < upper)
+        
+        # 合致した時間のリストを取得
+        valid_times = times[mask]
+        
+        # (spike_time, neuron_idx) の形式のために保存
+        spike_times.extend(valid_times)
+        neuron_indices.extend([synapse_idx] * len(valid_times))
+
+    # 3. (spike_time, neuron_idx) の形式の ndarray を作成
+    result = np.column_stack((spike_times, neuron_indices))
+    
+    # 時間順にソート（シミュレータの制約上、昇順が望ましい場合が多い）
+    result = result[result[:, 0].argsort()]
+    
+    return result
+
 
 class datagenerator():
     def __init__(self, params):
@@ -29,18 +55,10 @@ class datagenerator():
         self.exc_num_syn          = params['exc_num_syn']
         self.exc_num_synchro_syns = params['exc_num_synchro_syns']
         self.exc_syn_weight       = params['exc_syn_weight']
-        self.inh_num_syns         = params['inh_num_syns']
 
         self.t = self.bin_width*np.arange(self.len_transientdata+self.len_trainingdata+self.len_testdata)
 
 
-        if hasattr(self, 'time_delay'): # true when the instance generate continuos time system's timeseries
-            self.transientdata_input  = self.generate_data(0, self.len_transientdata, 0)
-            self.trainingdata_input   = self.generate_data(self.len_transientdata, self.len_transientdata+self.len_trainingdata, 0)
-            self.trainingdata_target  = self.generate_data(self.len_transientdata, self.len_transientdata+self.len_trainingdata, self.time_delay)
-            self.testdata_input       = self.generate_data(self.len_transientdata+self.len_trainingdata, self.len_transientdata+self.len_trainingdata+self.len_testdata, 0)
-            self.testdata_target      = self.generate_data(self.len_transientdata+self.len_trainingdata, self.len_transientdata+self.len_trainingdata+self.len_testdata, self.time_delay)
-   
     def generate_data(self, start_binindex, end_binindex, delay):
         raise NotImplementedError("generate_data() is not implemented.")
 
@@ -50,15 +68,8 @@ class datagenerator():
     def get_inputdata(self):
         return np.concatenate([self.transientdata_input, self.trainingdata_input, self.testdata_input])
 
-    #def create_synapses(self, cell):
-    #    raise NotImplementedError("create_synapses() is not implemented.")
-
     def connect_synapses(self):
         raise NotImplementedError("connect_synapses() is not implemented.")
-
-    #def resister_inputevent_toNetCon(self, netcon_list):
-    #    # this function must be called after nrn.finitialize()
-    #    raise NotImplementedError("resister_spikes() is not implemented.")
 
     def get_spike_trains(self, mode):
         raise NotImplementedError("get_spike_trains() is not implemented.")
@@ -66,10 +77,18 @@ class datagenerator():
 
 class sin_datagenerator(datagenerator):
     def __init__(self, params, freq, prng):
+        super().__init__(params)
         self.time_delay        = params['time_delay'] 
         self.freq              = freq
         self.prng = prng
-        super().__init__(params)
+
+        self.transientdata_input  = self.generate_data(0, self.len_transientdata, 0)
+        self.trainingdata_input   = self.generate_data(self.len_transientdata, self.len_transientdata+self.len_trainingdata, 0)
+        self.trainingdata_target  = self.generate_data(self.len_transientdata, self.len_transientdata+self.len_trainingdata, self.time_delay)
+        self.testdata_input       = self.generate_data(self.len_transientdata+self.len_trainingdata, self.len_transientdata+self.len_trainingdata+self.len_testdata, 0)
+        self.testdata_target      = self.generate_data(self.len_transientdata+self.len_trainingdata, self.len_transientdata+self.len_trainingdata+self.len_testdata, self.time_delay)
+ 
+        create_receptive_field(self)
 
     def generate_data(self, start_binindex, end_binindex, delay):
         data = np.sin(2*np.pi*self.freq*(self.t[start_binindex:end_binindex]-delay))
@@ -88,8 +107,8 @@ class sin_datagenerator(datagenerator):
     def connect_synapses(self):
         connect_synapses_toydata(self)
        
-    #def resister_inputevent_toNetCon(self):
-    #    resister_inputevent_toNetCon_toydata(self)
+    def get_spike_trains(self):
+        get_spike_trains_receptive_field(self)
 
 
 class MackeyGlass_datagenerator(datagenerator):
@@ -323,11 +342,6 @@ class RandomPattern_datagenerator(datagenerator):
         self.exc_num_syn          = params['exc_num_syn']
         self.exc_syn_weight       = params['exc_syn_weight']
         self.firing_rate          = params['firing_rate']
-
-        self.inh_num_syns         = params['inh_num_syns']
-        self.inh_syn_weight       = params['inh_syn_weight']
-        self.inh_syn_tau1         = params['inh_syn_tau1']
-        self.inh_syn_tau2         = params['inh_syn_tau2']
 
         self.mGluR_stim_train_idx = 0
         self.mGluR_stim_train = []

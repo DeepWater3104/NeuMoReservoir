@@ -1,5 +1,6 @@
 # Task-specific parameters for TI-46 spoken digit recognition
 name: "ti46"
+datagenerator_type: "TI46word_datagenerator"
 n_repetition: 5
 num_outputs: 10
 exc_num_syn: 78               # Added: Required by DataGenerator

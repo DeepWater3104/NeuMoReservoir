@@ -52,6 +52,27 @@ def check_synapse_stats(self):
             print(f"{lower:4.0f}-{upper:4.0f} um: {bar}")
             print(f"    -> Synapses: {len(syns_in_range)}, Segments: {len(segs_in_range)}")
 
+def test_distance_accuracy(self, cell):
+    from neuron import h
+    # 1. 基点を再設定（念のため）
+    nrn.distance(0, 0.5, sec=cell.soma[0])
+    
+    print("--- NEURON Distance Validation ---")
+    
+    # テストA: 細胞体自身の距離（0付近になるはず）
+    d_soma = h.distance(cell.soma[0](0.5))
+    print(f"Distance at Soma(0.5): {d_soma:.4f} um (Expected: 0.0)")
+
+    # テストB: 細胞体の端（L/2 になるはず）
+    d_soma_end = h.distance(cell.soma[0](1.0))
+    print(f"Distance at Soma(1.0): {d_soma_end:.4f} um (Expected: ~{cell.soma[0].L/2:.1f})")
+
+    # テストC: 最初の樹状突起の根元
+    # get_dend_and_somaが返す最初のセクションの開始点
+    first_dend = next(iter(get_dend_and_soma(cell)))
+    d_dend_start = h.distance(first_dend(0.0))
+    print(f"Distance at First Dendrite start: {d_dend_start:.4f} um")
+
 
 class neuronalreservoir():
     def __init__(self, cell, prng, params):
@@ -75,22 +96,22 @@ class neuronalreservoir():
         self.W = self.prng.random(self.num_states+1)# readout weight
         
         self._build_network()
-        self.create_records()
+        self._create_records()
 
     def _build_network(self):
         self._create_synapses()
         self._connect_synapses()
 
     def _create_synapses(self):
-        test_distance_accuracy(self, cell)
+        test_distance_accuracy(self, self.cell)
         # 距離計算の基準点（細胞体）を設定
-        nrn.distance(0, 0.5, sec=cell.soma[0]) 
+        nrn.distance(0, 0.5, sec=self.cell.soma[0]) 
         all_segs = []
         areas = []
         distances = []
 
         # 1. 全セグメントの情報を収集
-        for sec in get_dend_and_soma(cell):
+        for sec in get_dend_and_soma(self.cell):
             for seg in sec:
                 all_segs.append(seg)
                 areas.append(seg.area())
@@ -101,25 +122,25 @@ class neuronalreservoir():
         distances = np.array(distances)
 
         # 2. 条件に応じた重み付け
-        if condition == "distal-dense":  # 遠位に密集
+        if self.condition == "distal-dense":  # 遠位に密集
             mu = 600.0  # 遠く（細胞の最大長に合わせて調整）
             sigma = 100.0
             weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
             
-        elif condition == "proximal-dense":  # 近位に密集
+        elif self.condition == "proximal-dense":  # 近位に密集
             mu = 0.0   # 細胞体に近い
             sigma = 100.0
             weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
-        elif condition == "proximal-sparse":  # 近位に密集
+        elif self.condition == "proximal-sparse":  # 近位に密集
             mu = 000.0   # 細胞体に近い
             sigma = 300.0
             weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
-        elif condition == "distal-sparse":  # 遠位に密集
+        elif self.condition == "distal-sparse":  # 遠位に密集
             mu = 600.0  # 遠く（細胞の最大長に合わせて調整）
             sigma = 300.0
             weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
             
-        elif condition == "random":  # 面積に比例した一様分布
+        elif self.condition == "random":  # 面積に比例した一様分布
             weights = areas
 
         # 3. 重みの正規化（合計を1にする）
@@ -148,10 +169,22 @@ class neuronalreservoir():
             nc_tosyn.weight[0] = self.exc_syn_weight
             self.exc_nc_list.append(nc_tosyn)
 
-    def _resister_inputevent_toNetCon(self):
-        for synapse_idx, spike_train in enumerate(spike_trains):
-            for spike_time in spike_train:
-                self.exc_nc_list[synapse_idx].event(spike_time)
+    def resister_spike_events(self, spike_trains):
+        """
+        spike_trains: np.ndarray (shape: [N, 2]) 
+                      column 0: spike_time, column 1: neuron_idx
+        """
+        # 1. 時間順にソートされていることを保証 (重要)
+        # 既にソート済みであればこのステップはスキップ可能だが、安全のため。
+        sorted_spikes = spike_trains[spike_trains[:, 0].argsort()]
+
+        # 2. イベントの登録
+        for spike_time, neuron_idx in sorted_spikes:
+            # neuron_idx を int にキャスト（numpyのfloat型だとエラーが出るシミュレータがあるため）
+            idx = int(neuron_idx)
+            
+            # 指定されたニューロン(NetCon等)にイベントを投入
+            self.exc_nc_list[idx].event(spike_time)
 
     def _create_records(self):
         self.t_rec = nrn.Vector().record(nrn._ref_t)
