@@ -93,7 +93,7 @@ class neuronalreservoir():
         self.v_rec_list = []
 
         self.prng = prng
-        self.W = self.prng.random(self.num_states+1)# readout weight
+        self.W = self.prng.random(self.num_states)# readout weight
         
         self._build_network()
         self._create_records()
@@ -226,8 +226,7 @@ class neuronalreservoir():
                         else:
                             break
 
-    def generate_dynamics(self, spike_train, total_duration):
-        self.resister_inputevent_toNetCon(spike_train)
+    def generate_dynamics(self, total_duration):
         nrn.continuerun( total_duration * ms)
 
     #def bin_average(self, v_rec, t_rec):
@@ -250,36 +249,79 @@ class neuronalreservoir():
 
     #    return np.transpose(output)
 
-    def get_binned_states(self, start_bin, end_bin):
-        """
-        start_binからend_binまでの状態量を計算する共通メソッド
-        """
-        # 1. 必要な時間範囲を特定 (ベクトル演算で高速化)
-        t_start = start_bin * self.bin_width
-        t_end = (end_bin + 1) * self.bin_width
+    def get_binned_states(self):
+        t_rec = np.array(self.t_rec.to_python())
+        v_rec = np.column_stack([np.array(v.to_python()) for v in self.v_rec_list])
+        t_end = t_rec[-1]
+
+        # 1. 時間刻みの計算 (dt) を先に計算
+        # 各点から「次の点」までの時間を重みとする
+        dt = np.diff(t_rec, append=t_rec[-1] + (t_rec[-1] - t_rec[-2]))
         
-        # 範囲内のインデックスを抽出
-        mask = (self.t_rec >= t_start) & (self.t_rec < t_end)
-        v_slice = self.v_rec[:, mask]
-        t_slice = self.t_rec[mask]
-    
-        # 2. 各Binへの割り当て（np.digitizeを使用）
-        bin_indices = ((t_slice - t_start) // self.bin_width).astype(int)
+        # 2. ビン・インデックスの計算（丸め誤差対策）
+        # t_startからの相対時間で計算
+        t_relative = t_rec - t_rec[0]
+        bin_indices = (t_relative / self.bin_width).astype(int)
+        num_bins = int(t_end / self.bin_width)
+        bin_indices = np.clip(bin_indices, 0, num_bins - 1)
+        print(f'debug')
+        print(t_rec[0])
+        print(t_rec[-1])
+
+        print(f'debug')
+        print(bin_indices[-1])
+        print(num_bins)
+        print(bin_indices)
         
-        # 3. 時間重み付き和の計算 (t_{i+1} - t_i)
-        dt = np.diff(t_slice, append=t_slice[-1] + (t_slice[-1]-t_slice[-2]))
-        weighted_v = v_slice * dt
+        # 3. 重み付き状態量の計算
+        weighted_v = v_rec * dt[:, np.newaxis]
         
-        # 4. Binごとに集約 (np.add.at または bincount)
-        num_bins = end_bin - start_bin + 1
-        res = np.zeros((self.num_states, num_bins))
-        for i in range(self.num_states):
-            res[i] = np.bincount(bin_indices, weights=weighted_v[i], minlength=num_bins)[:num_bins]
-            
+        # 4. 集約 (ループを回避)
+        res = np.zeros((num_bins, self.num_states))
+        # numpy.add.at は res[bin_indices, :] += weighted_v を高速に行う
+        np.add.at(res, bin_indices, weighted_v)
+        
         return res / self.bin_width
 
-    def readout(self):
-        return self.state_variables @ self.W
+    #def get_binned_states(self):
+    #    """
+    #    start_binからend_binまでの状態量を計算する共通メソッド
+    #    """
+    #    # 1. 必要な時間範囲を特定 (ベクトル演算で高速化)
+    #    #t_start = start_bin * self.bin_width
+    #    #t_end = (end_bin + 1) * self.bin_width
+    #    t_rec = np.array(self.t_rec.to_python())
+    #    t_start   = t_rec[0]
+    #    t_end     = t_rec[-1]
+    #    start_bin = int(t_start / self.bin_width)
+    #    print(f'start_bin: {start_bin}')
+    #    end_bin   = int(t_end   / self.bin_width)
+    #    print(f'end_bin: {end_bin}')
+
+    #    # 範囲内のインデックスを抽出
+    #    v_rec = np.column_stack([np.array(v_rec.to_python()) for v_rec in self.v_rec_list])
+    #    mask = (t_rec >= t_start) & (t_rec < t_end)
+    #    v_slice = v_rec[mask, :]
+    #    t_slice = t_rec[mask]
+    #
+    #    # 2. 各Binへの割り当て（np.digitizeを使用）
+    #    bin_indices = ((t_slice - t_start) // self.bin_width).astype(int)
+    #    
+    #    # 3. 時間重み付き和の計算 (t_{i+1} - t_i)
+    #    dt = np.diff(t_slice, append=t_slice[-1] + (t_slice[-1]-t_slice[-2]))
+    #    weighted_v = v_slice * dt[:, np.newaxis]
+    #    
+    #    # 4. Binごとに集約 (np.add.at または bincount)
+    #    num_bins = int(end_bin - start_bin + 1)
+    #    #res = np.zeros((self.num_states, num_bins))
+    #    res = np.zeros((num_bins, self.num_states))
+    #    for i in range(self.num_states):
+    #        res[:, i] = np.bincount(bin_indices, weights=weighted_v[:, i], minlength=num_bins)[:num_bins]
+    #        
+    #    return res / self.bin_width
+
+    def readout(self, state_vars):
+        return state_vars @ self.W
 
     def optimize(self, state_vars, target):
         self.W = np.linalg.inv(np.transpose(state_vars) @ state_vars + self.reg*np.eye(self.num_states)) @ np.transpose(state_vars) @ target

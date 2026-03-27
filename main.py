@@ -34,6 +34,7 @@ def main(cfg: DictConfig):
     
     # 2. Load Cell Model
     from neuron import h as nrn
+    from neuron.units import ms, mV
     from neuron_simulation import get_hoc_morph_for_emodel_folder, extract_template_name, check_line_in_file
     
     hoc_path, morph_path = get_hoc_morph_for_emodel_folder(cell_dir)
@@ -110,9 +111,94 @@ def main(cfg: DictConfig):
         neuronalreservoir = neuronalreservoir_prediction(cell, prng, params)
 
         # 動作確認用に最初のスパイクを取得してみる
-        # 正弦波予測の場合、data_idx は通常 0 のみか、あるいは無視される設計が多いです
         spike_trains = datagenerator.get_spike_trains()
-        print(spike_trains)
+        nrn.finitialize(-65 * mV)
         neuronalreservoir.resister_spike_events(spike_trains)
+        neuronalreservoir.generate_dynamics((params['task']['len_transientdata']+params['task']['len_trainingdata']+params['task']['len_testdata']) * params['bin_width'])
+        state_vars = neuronalreservoir.get_binned_states()
+        print(state_vars.shape)
+        print(state_vars[params['task']['len_transientdata']:params['task']['len_transientdata']+params['task']['len_trainingdata'], :].shape)
+        print(datagenerator.trainingdata_target.shape)
+        neuronalreservoir.optimize(state_vars[params['task']['len_transientdata']:params['task']['len_transientdata']+params['task']['len_trainingdata'], :], datagenerator.trainingdata_target)
+        output = neuronalreservoir.readout(state_vars)
+
+        import matplotlib.pyplot as plt
+        from sklearn.metrics import mean_squared_error
+        
+        # --- 1. 時間軸と区切りの定義 ---
+        t_full = datagenerator.t 
+        len_trans = params['task']['len_transientdata']
+        len_train = params['task']['len_trainingdata']
+        len_test = params['task']['len_testdata']
+        bin_w = params['bin_width']
+        
+        # --- 2. プロットの作成（4段構成） ---
+        fig, axes = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
+        
+        # (1) 入力スパイクラスター（原因の可視化）
+        #print(spike_trains.shape)
+        #for spike_times, i in enumerate(spike_trains):
+        #    axes[0].vlines(spike_times, i + 0.6, i + 1.4, color='royalblue', linewidth=1.0)
+        #axes[0].set_ylabel('Input ID')
+        #axes[0].set_title('Input Spike Raster')
+        # --- 修正版：(num_spikes, 2) 形式の spike_trains をプロットする ---
+
+        # axes[0] (入力ラスター) の部分を以下に差し替えてください
+        if spike_trains.size > 0:
+            # spike_trains[:, 0] が時刻、spike_trains[:, 1] がニューロンID
+            axes[0].scatter(spike_trains[:, 0], spike_trains[:, 1], 
+                            marker='|', color='royalblue', s=20, linewidths=1.0)
+            
+            # y軸の範囲をニューロン数に合わせる
+            num_inputs = int(np.max(spike_trains[:, 1])) + 1 if spike_trains.size > 0 else 1
+            axes[0].set_ylim(-0.5, num_inputs - 0.5)
+        
+        axes[0].set_ylabel('Input ID')
+        axes[0].set_title('Input Spike Raster')
+        
+        # (2) リザーバ膜電位（内部ダイナミクスの可視化）
+        if hasattr(neuronalreservoir, 'v_rec_list'):
+            # 全細胞プロットすると重い場合は [::n] で間引いてください
+            for v_rec in neuronalreservoir.v_rec_list:
+                axes[1].plot(neuronalreservoir.t_rec, v_rec, alpha=0.5, linewidth=0.5)
+        axes[1].set_ylabel('V [mV]')
+        axes[1].set_title('Reservoir Membrane Potential')
+        
+        # (3) ビニングされた状態（特徴量の可視化）
+        # state_vars は [全期間, ユニット数] の形状を想定
+        axes[2].plot(t_full, state_vars[:, :5], alpha=0.8) 
+        axes[2].set_ylabel('Binned State')
+        axes[2].set_title('Readout Input (First 5 units)')
+        
+        # (4) 出力（予測） vs 教師データ
+        target_all = datagenerator.get_targetdata()
+        t_output = t_full[len_trans:]
+        
+        axes[3].plot(t_output, target_all, 'k-', alpha=0.3, label='Target')
+        # 学習フェーズ
+        axes[3].plot(t_output[:len_train], output[:len_train], 'b', label='Train Pred', linewidth=1)
+        # テストフェーズ（インデックス修正済み）
+        axes[3].plot(t_output[len_train:len_train+len_test], output[len_train:len_train+len_test], 'r', label='Test Pred', linewidth=1.2)
+        
+        axes[3].axvline(x=t_output[len_train], color='green', linestyle='--', label='Train/Test Split')
+        axes[3].set_ylabel('Output')
+        axes[3].set_xlabel('Time [ms]')
+        axes[3].legend(loc='upper right', fontsize='small')
+        
+        # --- 3. 表示範囲の調整（拡大表示） ---
+        start_zoom = (len_trans + len_train // 2) * bin_w
+        end_zoom = (len_trans + len_train + len_test) * bin_w
+        for ax in axes:
+            ax.set_xlim(start_zoom, end_zoom)
+            ax.grid(axis='x', alpha=0.2)
+        
+        plt.tight_layout()
+        plt.savefig("reservoir_flow_analysis.png")
+        plt.show()
+        
+        # 数値の確認も忘れずに
+        mse_test = mean_squared_error(target_all[len_train:len_train+len_test], output[len_train:len_train+len_test])
+        print(f"Test MSE: {mse_test:.8f}")
+
 if __name__ == "__main__":
     main()

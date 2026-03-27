@@ -41,7 +41,7 @@ def get_spike_trains_receptive_field(self):
     
     # 時間順にソート（シミュレータの制約上、昇順が望ましい場合が多い）
     result = result[result[:, 0].argsort()]
-    
+   
     return result
 
 
@@ -108,7 +108,8 @@ class sin_datagenerator(datagenerator):
         connect_synapses_toydata(self)
        
     def get_spike_trains(self):
-        get_spike_trains_receptive_field(self)
+        spike_trains = get_spike_trains_receptive_field(self)
+        return spike_trains
 
 
 class MackeyGlass_datagenerator(datagenerator):

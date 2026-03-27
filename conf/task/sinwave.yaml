@@ -9,5 +9,5 @@ len_testdata: 300
 time_delay: 0 # ms for continuous time system
 
 exc_num_syn: 50                 # Added: Required by DataGenerator
-exc_syn_weight: 0.0001          # Added: Required by DataGenerator
+exc_syn_weight: 0.01          # Added: Required by DataGenerator
 exc_num_synchro_syns: 4         # expected to be an even number
