@@ -116,9 +116,6 @@ def main(cfg: DictConfig):
         neuronalreservoir.resister_spike_events(spike_trains)
         neuronalreservoir.generate_dynamics((params['task']['len_transientdata']+params['task']['len_trainingdata']+params['task']['len_testdata']) * params['bin_width'])
         state_vars = neuronalreservoir.get_binned_states()
-        print(state_vars.shape)
-        print(state_vars[params['task']['len_transientdata']:params['task']['len_transientdata']+params['task']['len_trainingdata'], :].shape)
-        print(datagenerator.trainingdata_target.shape)
         neuronalreservoir.optimize(state_vars[params['task']['len_transientdata']:params['task']['len_transientdata']+params['task']['len_trainingdata'], :], datagenerator.trainingdata_target)
         output = neuronalreservoir.readout(state_vars)
 
@@ -134,15 +131,7 @@ def main(cfg: DictConfig):
         
         # --- 2. プロットの作成（4段構成） ---
         fig, axes = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
-        
-        # (1) 入力スパイクラスター（原因の可視化）
-        #print(spike_trains.shape)
-        #for spike_times, i in enumerate(spike_trains):
-        #    axes[0].vlines(spike_times, i + 0.6, i + 1.4, color='royalblue', linewidth=1.0)
-        #axes[0].set_ylabel('Input ID')
-        #axes[0].set_title('Input Spike Raster')
-        # --- 修正版：(num_spikes, 2) 形式の spike_trains をプロットする ---
-
+       
         # axes[0] (入力ラスター) の部分を以下に差し替えてください
         if spike_trains.size > 0:
             # spike_trains[:, 0] が時刻、spike_trains[:, 1] がニューロンID
@@ -199,7 +188,7 @@ def main(cfg: DictConfig):
         plt.show()
         
         # 数値の確認も忘れずに
-        mse_test = mean_squared_error(target_all[len_train:len_train+len_test], output[len_train:len_train+len_test])
+        mse_test = mean_squared_error(target_all[len_train:len_train+len_test], output[len_trans+len_train:])
         print(f"Test MSE: {mse_test:.8f}")
 
 if __name__ == "__main__":

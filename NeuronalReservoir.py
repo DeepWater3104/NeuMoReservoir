@@ -264,14 +264,6 @@ class neuronalreservoir():
         bin_indices = (t_relative / self.bin_width).astype(int)
         num_bins = int(t_end / self.bin_width)
         bin_indices = np.clip(bin_indices, 0, num_bins - 1)
-        print(f'debug')
-        print(t_rec[0])
-        print(t_rec[-1])
-
-        print(f'debug')
-        print(bin_indices[-1])
-        print(num_bins)
-        print(bin_indices)
         
         # 3. 重み付き状態量の計算
         weighted_v = v_rec * dt[:, np.newaxis]
