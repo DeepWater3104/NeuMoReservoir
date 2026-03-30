@@ -6,7 +6,7 @@ defaults:
 # Shared parameters across different tasks and models
 num_states: 100
 reg: 1e-7
-record_target: "calcium_acum" # Target variable for recording (e.g., potential, calcium_acum)
+record_target: "potential" # Target variable for recording (e.g., potential, calcium_acum)
 plot_all: true                # Flag to enable detailed plotting of all variables
 bin_width: 0.5                # Time resolution for binning (ms)
 seed: 1234                    # Random seed for reproducibility

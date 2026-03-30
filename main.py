@@ -172,13 +172,15 @@ def main(cfg: DictConfig):
         
         # (4) 出力（予測） vs 教師データ
         target_all = datagenerator.get_targetdata()
+        input_all = datagenerator.get_inputdata()[len_trans:]
         t_output = t_full[len_trans:]
         
         axes[3].plot(t_output, target_all, 'k-', alpha=0.3, label='Target')
+        axes[3].plot(t_output, input_all, 'k-', alpha=0.3, label='Input')
         # 学習フェーズ
-        axes[3].plot(t_output[:len_train], output[:len_train], 'b', label='Train Pred', linewidth=1)
+        axes[3].plot(t_output[:len_train], output[len_trans:len_trans+len_train], 'b', label='Train Pred', linewidth=1)
         # テストフェーズ（インデックス修正済み）
-        axes[3].plot(t_output[len_train:len_train+len_test], output[len_train:len_train+len_test], 'r', label='Test Pred', linewidth=1.2)
+        axes[3].plot(t_output[len_train:], output[len_trans+len_train:], 'r', label='Test Pred', linewidth=1.2)
         
         axes[3].axvline(x=t_output[len_train], color='green', linestyle='--', label='Train/Test Split')
         axes[3].set_ylabel('Output')
