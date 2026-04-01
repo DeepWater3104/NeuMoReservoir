@@ -229,26 +229,6 @@ class neuronalreservoir():
     def generate_dynamics(self, total_duration):
         nrn.continuerun( total_duration * ms)
 
-    #def bin_average(self, v_rec, t_rec):
-    #    v_rec = np.array(v_rec)
-    #    t_rec = np.array(t_rec)
-    #    bin_index = 0
-    #    temp_sum = np.zeros(self.datagenerator.len_transientdata + self.datagenerator.len_trainingdata+self.datagenerator.len_testdata)
-
-    #    for t_index, t in enumerate(t_rec):
-    #        bin_index = math.floor(t/self.bin_width)
-    #        if (self.datagenerator.len_transientdata + self.datagenerator.len_trainingdata+self.datagenerator.len_testdata) <= bin_index:
-    #            break
-
-    #        if (t_index+1) == len(t_rec):
-    #            temp_sum[bin_index] += v_rec[t_index] * (len(self.datagenerator.get_inputdata()) * self.bin_width - t)
-    #        else:
-    #            temp_sum[bin_index] += v_rec[t_index] * (t_rec[t_index+1]-t)
-
-    #    output = temp_sum / self.bin_width
-
-    #    return np.transpose(output)
-
     def get_binned_states(self):
         t_rec = np.array(self.t_rec.to_python())
         v_rec = np.column_stack([np.array(v.to_python()) for v in self.v_rec_list])
@@ -274,43 +254,6 @@ class neuronalreservoir():
         np.add.at(res, bin_indices, weighted_v)
         
         return res / self.bin_width
-
-    #def get_binned_states(self):
-    #    """
-    #    start_binからend_binまでの状態量を計算する共通メソッド
-    #    """
-    #    # 1. 必要な時間範囲を特定 (ベクトル演算で高速化)
-    #    #t_start = start_bin * self.bin_width
-    #    #t_end = (end_bin + 1) * self.bin_width
-    #    t_rec = np.array(self.t_rec.to_python())
-    #    t_start   = t_rec[0]
-    #    t_end     = t_rec[-1]
-    #    start_bin = int(t_start / self.bin_width)
-    #    print(f'start_bin: {start_bin}')
-    #    end_bin   = int(t_end   / self.bin_width)
-    #    print(f'end_bin: {end_bin}')
-
-    #    # 範囲内のインデックスを抽出
-    #    v_rec = np.column_stack([np.array(v_rec.to_python()) for v_rec in self.v_rec_list])
-    #    mask = (t_rec >= t_start) & (t_rec < t_end)
-    #    v_slice = v_rec[mask, :]
-    #    t_slice = t_rec[mask]
-    #
-    #    # 2. 各Binへの割り当て（np.digitizeを使用）
-    #    bin_indices = ((t_slice - t_start) // self.bin_width).astype(int)
-    #    
-    #    # 3. 時間重み付き和の計算 (t_{i+1} - t_i)
-    #    dt = np.diff(t_slice, append=t_slice[-1] + (t_slice[-1]-t_slice[-2]))
-    #    weighted_v = v_slice * dt[:, np.newaxis]
-    #    
-    #    # 4. Binごとに集約 (np.add.at または bincount)
-    #    num_bins = int(end_bin - start_bin + 1)
-    #    #res = np.zeros((self.num_states, num_bins))
-    #    res = np.zeros((num_bins, self.num_states))
-    #    for i in range(self.num_states):
-    #        res[:, i] = np.bincount(bin_indices, weights=weighted_v[:, i], minlength=num_bins)[:num_bins]
-    #        
-    #    return res / self.bin_width
 
     def readout(self, state_vars):
         return state_vars @ self.W
