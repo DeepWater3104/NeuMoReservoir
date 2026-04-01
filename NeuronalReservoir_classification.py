@@ -3,105 +3,24 @@ from neuron import h as nrn
 from neuron.units import ms, mV
 
 class neuronalreservoir_classification(neuronalreservoir):
-    def __init__(self, cell, datagenerator_classification, prng, params):
+    def __init__(self, cell, prng, params):
         self.cell = cell
 
         self.prng = prng
         nrn.celsius = 36
         self.datagenerator = datagenerator_classification
 
-        # store parameters as members
-        self.bin_width   = params['bin_width']
-        self.num_states = params['num_states']
-        self.num_outputs = params['num_outputs']
-        self.exc_num_syns         = params['exc_num_syns']
-        self.exc_syn_weight       = params['exc_syn_weight']
-        self.exc_syn_tau1         = params['exc_syn_tau1']
-        self.exc_syn_tau2         = params['exc_syn_tau2']
-        self.syn_mechanisms         = params['syn_mechanisms']
-        self.record_target = params['record_target']
-        self.reg = params['reg']
         self.plot_all              = params['plot_all']
-
-        self.W = self.prng.random((self.num_outputs, self.num_states+1)) # readout weight
-        self.training_state_vars = np.zeros((self.num_states, 0))
-        self.test_state_vars = np.zeros((self.num_states, 0))
-        self.create_synapses()
-        self.connect_synapses()
-        self.v_rec_list = []
-        self.excsyncurrent_rec_list = []
-        self.inhsyncurrent_rec_list = []
-        self.create_records(calcium, cyt)
 
         # used to calculate firing rate
         self.Vm_at_soma = nrn.Vector().record(self.cell.soma[0](0.5)._ref_v)
         self.spike_timings = []
 
+        super().__init__(cell, prng, params)
+
         self.data_buffer = []
         self.batches_to_save_idx   = params['batches_to_save_idx']
         self.batches_to_save_mode  = params['batches_to_save_mode']
-
-    def create_records(self):
-        super().create_records()
-        if self.plot_all:
-            self.buffer_variable_list = []
-            if self.record_target == 'potential':
-                total_length = 0
-                cumulative_length_dict = []
-                for sec in self.cell.all:
-                    cumulative_length = {'min':total_length, 'max':total_length+sec.L}
-                    cumulative_length_dict.append(cumulative_length)
-                    total_length += sec.L
-
-                while len(self.buffer_variable_list) < self.num_states:
-                    rec_loc = total_length * self.prng.random()
-
-                    for index, sec in enumerate(self.cell.all):
-                        if cumulative_length_dict[index]['min'] <= rec_loc and rec_loc < cumulative_length_dict[index]['max']:
-                            rec_prop = (rec_loc - cumulative_length_dict[index]['min']) / (cumulative_length_dict[index]['max'] - cumulative_length_dict[index]['min'])
-                            if hasattr(sec(rec_prop), '_ref_cai'):
-                                v = nrn.Vector().record(sec(rec_prop)._ref_cai)
-                                self.buffer_variable_list.append(v)
-                            else:
-                                break
-                
-            elif self.record_target == 'calcium_acum':
-                total_length = 0
-                cumulative_length_dict = []
-                for sec in self.cell.all:
-                    cumulative_length = {'min':total_length, 'max':total_length+sec.L}
-                    cumulative_length_dict.append(cumulative_length)
-                    total_length += sec.L
-
-                for rec in range(self.num_states):
-                    rec_loc = total_length * self.prng.random()
-
-                    for index, sec in enumerate(self.cell.all):
-                        if cumulative_length_dict[index]['min'] <= rec_loc and rec_loc < cumulative_length_dict[index]['max']:
-                            rec_prop = (rec_loc - cumulative_length_dict[index]['min']) / (cumulative_length_dict[index]['max'] - cumulative_length_dict[index]['min'])
-                            v = nrn.Vector().record(sec(rec_prop)._ref_v)
-                            self.buffer_variable_list.append(v)
-
-    def sampling(self, start_bin_idx, end_bin_idx):
-        state_vars_within_batch = np.zeros((self.num_states, end_bin_idx - start_bin_idx + 1))
-        v_rec_np = np.array([np.array(v_rec.to_python()) for v_rec in self.v_rec_list])
-        t_rec_array = np.array(self.t_rec.to_python())
-        for bin_idx in range(start_bin_idx, end_bin_idx+1):
-            bin_start_time = self.bin_width * bin_idx 
-            bin_end_time   = self.bin_width * (bin_idx+1)
-            time_idx_within_bin = np.where((bin_start_time < t_rec_array) & (t_rec_array < bin_end_time))[0]
-            if time_idx_within_bin[-1]+1 < len(t_rec_array): # not the last bin in this batch
-                for time_idx in time_idx_within_bin:
-                    state_vars_within_batch[:, bin_idx - start_bin_idx] += (v_rec_np[:, time_idx] * (t_rec_array[time_idx+1] - t_rec_array[time_idx]))
-                state_vars_within_batch[:, bin_idx - start_bin_idx] = state_vars_within_batch[:, bin_idx - start_bin_idx] / (t_rec_array[time_idx_within_bin[-1]+1] - t_rec_array[time_idx_within_bin[0]])
-                    
-            elif time_idx_within_bin[-1]+1 == len(t_rec_array): # the last bin in this batch
-                for time_idx in time_idx_within_bin[:-1]:
-                    state_vars_within_batch[:, bin_idx - start_bin_idx] += (v_rec_np[:, time_idx] * (t_rec_array[time_idx+1] - t_rec_array[time_idx]))
-                state_vars_within_batch[:, bin_idx - start_bin_idx] += (v_rec_np[:, time_idx_within_bin[-1]] * (t_rec_array[time_idx_within_bin[-1]] - t_rec_array[time_idx_within_bin[-1]-1]))
-                state_vars_within_batch[:, bin_idx - start_bin_idx] = state_vars_within_batch[:, bin_idx - start_bin_idx] / (t_rec_array[time_idx_within_bin[-1]] - t_rec_array[time_idx_within_bin[-2]] + (t_rec_array[time_idx_within_bin[-1]] - t_rec_array[time_idx_within_bin[0]]))
-
-        return state_vars_within_batch
 
     def save_to_buffer(self, mode, data_idx, spike_train):
         buffer = {}
@@ -273,18 +192,6 @@ class neuronalreservoir_classification(neuronalreservoir):
                 self.spike_timings = self.spike_timings + get_spike_timings(t_rec_array, v_rec_array, threshold=-20)
 
                 nrn.frecord_init()
-
-    def optimize(self):
-        state_vars = np.concatenate( (self.training_state_vars, np.ones((1, self.training_state_vars.shape[1]))), axis=0 )
-        self.W = self.datagenerator.trainingdata_target @ np.transpose(state_vars) @ np.linalg.inv(state_vars @ state_vars.transpose() + self.reg*np.eye(self.num_states+1))
-
-    def readout_training(self):
-        state_vars = np.concatenate( (self.training_state_vars, np.ones((1, self.training_state_vars.shape[1]))), axis=0 )
-        return  self.W @ state_vars
-
-    def readout_test(self):
-        state_vars = np.concatenate( (self.test_state_vars, np.ones((1, self.test_state_vars.shape[1]))), axis=0 )
-        return self.W @ state_vars
 
     def classify(self, data_idx, mode):
         if mode=="training":
@@ -545,10 +452,6 @@ if __name__ == '__main__':
     params = NeuronalReservoir_params.TI46word_params
     prng = np.random.default_rng(1234)
 
-    # CA3 pyramidal
-    #from CA3pyramidal import CA3Pyramidal
-    #cell = CA3Pyramidal(STDP=False)
-
     from TI46Subset import trainseq_code, testseq_code
 
     # 訓練データ
@@ -628,77 +531,9 @@ if __name__ == '__main__':
         sec.gbar_kca = 0.0
 
 
-
     #Setup the parameters for the cell
     nrn.celsius = 34.0
     nrn.v_init = -80.
-    
-    #sys.path.append("../")
-    ##from utils import RxD_params, add_ip3_cai_RxD
-    #rxd_params = {
-    #        "fc": 0.83,
-    #        "fe": 0.17,
-    #        "ip3Diff": 1.415,
-    #        "ip3_init": 0.1,
-    #        "caDiff": 0.080,
-    #        "caAvg_init": 0.0017,
-    #        "caCYT_init": 0.0001,
-    #        "ip3_notorigin": 120400.0,
-    #        "gserca0": 1.9565,
-    #        "gleak0": 18.06,
-    #        "ip3rtau": 400,
-    #        "tau_ip3": 1000
-    #        }
-    #
-    ## the surface_fraction=1 means that even though cyt only occupies fc of the space,
-    ## it has all of the surface area (important for currents from NMODL)
-    #secs = [sec for sec in cell.all]
-    #cyt = rxd.Region(secs, nrn_region='i', geometry=rxd.FractionalVolume(rxd_params['fc'], surface_fraction=1))
-    #er = rxd.Region(secs, geometry=rxd.FractionalVolume(rxd_params['fe']))
-    #
-    ## this defines a boundary with an area independent of geometry (here there is
-    ## one square micron of area per micron of length)
-    #cyt_er_membrane = rxd.Region(secs, geometry=rxd.ScalableBorder(1))
-    #
-    ## reaction-diffusion definition
-    #ca = rxd.Species([cyt, er], d=rxd_params['caDiff'], name='ca', charge=2, initial=rxd_params['caCYT_init'])
-    #ip3 = rxd.Species(cyt, d=rxd_params['ip3Diff'], initial=rxd_params['ip3_init'])
-    #
-    ##gip3r - not a rate constant but multiplies k, which is a rate constant (?)
-    #gip3r = rxd.Parameter(cyt, initial=rxd_params['ip3_notorigin']) # parameters but set magnitude via concentration or value
-    #gserca = rxd.Parameter(cyt, initial=rxd_params['gserca0']) 
-    #gleak = rxd.Parameter(cyt, initial=rxd_params['gleak0']) 
-    #
-    ## action of IP3 receptor
-    #Kip3 = 0.13 # Kip3 = 0.15
-    #Kact = 0.4
-    #minf = ip3[cyt] * 1000. * ca[cyt] / (ip3[cyt] + Kip3) / (1000. * ca[cyt] + Kact)
-    ##ip3r_gate_state = rxd.State(cyt_er_membrane, initial=0.78282068629348611)
-    #ip3r_gate_state = rxd.State(cyt_er_membrane, initial=0.8)
-    #h_gate = ip3r_gate_state[cyt_er_membrane]
-    #k = gip3r[cyt] * (minf * h_gate) ** 3 
-    ##ip3r = rxd.MultiCompartmentReaction(ca[er]<>ca[cyt], k, k, membrane=cyt_er_membrane) # temporally comment-out
-    #ip3r = rxd.MultiCompartmentReaction(ca[er], ca[cyt], k, k, membrane=cyt_er_membrane)
-    #
-    ##rxd.Reaction(ip3, None, ip3 / params['tau_ip3'], regions=cyt) # autonomous decreasing
-    #ip3_exponential_decrease = rxd.Rate(ip3,  - ip3 / rxd_params['tau_ip3'], regions=cyt) # autonomous decreasing
-    #
-    ## IP3 receptor gating
-    #ip3rg = rxd.Rate(h_gate, (1. / (1 + 1000. * ca[cyt] / (0.4)) - h_gate) / rxd_params['ip3rtau'])
-    #
-    ## SERCA pump: pumps ca from cyt -> ER
-    #Kserca = 0.1 # Michaelis constant for SERCA pump
-    ##serca = rxd.MultiCompartmentReaction(ca[cyt]>ca[er],gserca[cyt]*(1e3*ca[cyt])**2/(Kserca**2+(1e3*ca[cyt])**2),membrane=cyt_er_membrane,custom_dynamics=True) # temporally comment-out
-    #serca = rxd.MultiCompartmentReaction(ca[cyt], ca[er], gserca[cyt]*(1e3*ca[cyt])**2/(Kserca**2+(1e3*ca[cyt])**2), membrane=cyt_er_membrane, custom_dynamics=True)
-    #
-    ## leak channel: bidirectional ca flow btwn cyt <> ER
-    ##leak = rxd.MultiCompartmentReaction(ca[er]<>ca[cyt], gleak[cyt], gleak[cyt], membrane=cyt_er_membrane) # temporally comment-out
-    #leak = rxd.MultiCompartmentReaction(ca[er], ca[cyt], gleak[cyt], gleak[cyt], membrane=cyt_er_membrane)
-    #
-
-    #cae_init = (rxd_params['caAvg_init'] - rxd_params['caCYT_init'] * rxd_params['fc']) / rxd_params['fe']
-    #ca[er].concentration = cae_init
-    #nrn.cvode.re_init()
 
     #reservoir = neuronalreservoir_classification(cell, datagenerator, prng, params, ca, ip3, cyt)
     reservoir = neuronalreservoir_classification(cell, datagenerator, prng, params)
