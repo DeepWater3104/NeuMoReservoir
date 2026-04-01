@@ -137,15 +137,9 @@ class MackeyGlass_datagenerator(datagenerator):
     def get_inputdata(self):
         return np.concatenate([self.transientdata_input, self.trainingdata_input, self.testdata_input])
 
-    #def create_synapses(self, cell):
-    #    create_synapses_toydata(self, cell)
-    #    create_datasyn_correspondance_toydata(self)
-
     def connect_synapses(self):
         connect_synapses_toydata(self)
-       
-    #def resister_inputevent_toNetCon(self):
-    #    resister_inputevent_toNetCon_toydata(self)
+
 
 from lyon.calc import LyonCalc
 import librosa
@@ -309,15 +303,6 @@ class TI46word_datagenerator(datagenerator):
             spike_trains.append(spike_train)
         return spike_trains
        
-    #def resister_inputevent_toNetCon(self, data_idx, mode):
-    #    time_coch, coch = self.generate_data(data_idx, mode)
-    #    spike_trains = self.convert_to_spiketrain(time_coch, self.normalize_coch(coch), "poissonian")
-    #    for synapse_idx, spike_train in enumerate(spike_trains):
-    #        for spike_time in spike_train:
-    #            spike_time = self.bin_width * sum(self.len_data[:-1]) + spike_time
-    #            self.exc_nc_list[synapse_idx].event(spike_time)
-    #    return spike_trains
-
     def get_spike_trains(self, data_idx, mode):
         time_coch, coch = self.generate_data(data_idx, mode)
         spike_trains = self.convert_to_spiketrain(time_coch, self.normalize_coch(coch), "poissonian")
@@ -351,7 +336,6 @@ class RandomPattern_datagenerator(datagenerator):
         self.num_outputs  = params['num_outputs'] # クラス数（例: 10クラス分類なら10）
         self.num_classes  = params['num_outputs'] # クラス数（例: 10クラス分類なら10）
         self.num_channels = params['exc_num_syn'] # 入力次元数（シナプス数と一致させる）
-        self.condition    = params['condition'] # 
         self.jitter_std   = params['jitter_std'] # 
         
         self.pattern_duration_ms = params.get('pattern_duration_ms', 1000) # 1パターンの長さ(ms)
@@ -482,6 +466,8 @@ class RandomPattern_datagenerator(datagenerator):
             self.len_data.append(int(self.pattern_duration_ms / self.bin_width))
             label_idx = data_idx
             self.trainingdata_target = np.concatenate([self.trainingdata_target, self.generate_target_within_batch(data_idx,  label_idx)], axis=1)
+            print(f'debug')
+            print(spike_train.shape)
             return self.class_templates[label_idx]
         elif mode=="test":
             self.len_data.append(int(self.pattern_duration_ms / self.bin_width))
@@ -505,29 +491,6 @@ class RandomPattern_datagenerator(datagenerator):
             
             return spiketrain
         
-    #def resister_inputevent_toNetCon(self, data_idx, mode):
-    #    """
-    #    NEURONのNetConにイベントを登録するメイン関数
-    #    """
-    #    spike_trains = self.generate_data(data_idx, mode)
-
-    #    # 全体のシミュレーション時間（オフセット）を計算
-    #    # len_dataにはこれまでのデータの長さ（ステップ数ではなく配列サイズ=時間数と仮定されている場合もあるが、
-    #    # 元コードでは np.size(time_coch) を入れているので、これは「サンプル数(点数)」である。
-    #    # spike_time は bin_width * sum(len_data) でオフセットする必要がある。
-    #    
-    #    # 注意: 元コードの sum(self.len_data[:-1]) は直前のデータまでの長さを取得している
-    #    offset_time = 0
-    #    if len(self.len_data) > 1:
-    #        # 今回追加した分(generate_dataでappend済)を除いて合計し、時間に変換
-    #        # len_dataはappend済みなので、今回分を除くには [:-1]
-    #        offset_time = sum(self.len_data[:-1]) * self.bin_width
-
-    #    for spike_time, synapse_idx in spike_trains:
-    #        abs_time = offset_time + spike_time
-    #        self.exc_nc_list[int(synapse_idx)].event(abs_time)
-    #    return spike_trains
-
     def get_spike_trains(self, data_idx, mode):
         """
         NEURONのNetConにイベントを登録するメイン関数

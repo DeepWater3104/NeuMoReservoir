@@ -79,8 +79,8 @@ class neuronalreservoir():
         self.cell = cell
         nrn.celsius = 36
 
-        self.bin_width   = params['bin_width']
-        self.num_states = params['num_states']
+        self.bin_width     = params['bin_width']
+        self.num_states    = params['num_states']
         self.record_target = params['record_target']
 
         self.exc_syn_tau1         = params['exc_syn_tau1']

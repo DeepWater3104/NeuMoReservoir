@@ -1,6 +1,6 @@
 # Default configurations for the reservoir simulation
 defaults:
-  - task: sinwave
+  - task: random
   - _self_
 
 # Shared parameters across different tasks and models

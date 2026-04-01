@@ -9,3 +9,4 @@ maximum_firing_rate: 10
 decimation_factor: 64         # Added: Required for audio processing
 sampling_frequency: 12500     # Added: Required for audio processing
 plot_all: true
+bin_width: 5

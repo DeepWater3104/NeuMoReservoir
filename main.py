@@ -51,7 +51,7 @@ def main(cfg: DictConfig):
 
 
     # --- 3. DataGenerator Type Specific Setup ---
-    if params['task']['datagenerator_type'] == "TI46word_datagenerator":
+    if params['task']['datagenerator_type'] == "ti46":
         # Import the speaker-specific dataset codes from TI46Subset.py
         from TI46Subset import trainseq_code, testseq_code
         from DataGenerator import TI46word_datagenerator
@@ -62,7 +62,7 @@ def main(cfg: DictConfig):
         
         # Implement dataset repetition and shuffling logic here
         # These functions were originally in your classification scripts
-        from NeuronalReservoir_classification import repeat_dataset_codes, shuffle_dataset_codes_numpy
+        from NeuronalReservoir_classification import neuronalreservoir_classification, repeat_dataset_codes, shuffle_dataset_codes_numpy
         
         # Repeat and shuffle training data
         # Accessing 'n_repetition' from the task-specific YAML configuration
@@ -90,7 +90,126 @@ def main(cfg: DictConfig):
         print(f"DataGenerator initialized with bin_width: {params['bin_width']} ms")
 
         spike_trains = datagenerator.get_spike_trains(data_idx=0, mode='train')
-    elif params['task']['datagenerator_type'] == "sin_datagenerator":
+
+    elif params['task']['name'] == "random":
+        from DataGenerator import RandomPattern_datagenerator
+        datagenerator = RandomPattern_datagenerator(params['task'], prng)
+
+        params['batches_to_save_idx']  = []
+        params['batches_to_save_mode'] = []
+
+        for data_idx in range(datagenerator.train_dataset_size):
+            params['batches_to_save_idx'].append(data_idx)
+            params['batches_to_save_mode'].append("training")
+        # ---
+        
+        # testseq_codeの処理
+        test_indices = range(datagenerator.test_dataset_size)
+        num_test_samples = min(60, len(test_indices)) # 最大60個、データ数を超えないように
+        #num_test_samples = len(test_indices)
+        # ランダムにインデックスを30個（またはそれ以下）選択
+        selected_test_indices = prng.choice(test_indices, size=num_test_samples, replace=False)
+        
+        for data_idx in selected_test_indices:
+            params['batches_to_save_idx'].append(data_idx)
+            params['batches_to_save_mode'].append("test")
+
+        params['bin_width'] = datagenerator.bin_width
+
+        from NeuronalReservoir_classification import neuronalreservoir_classification
+        reservoir = neuronalreservoir_classification(cell, prng, params)
+        nrn.finitialize(-65 * mV)
+
+        from tqdm import tqdm
+        for data_idx in tqdm(range(datagenerator.train_dataset_size), desc="Training Data Simulation"): 
+            
+            # datagenerator.len_data はリストや配列であると仮定
+            start_bin_idx = sum(datagenerator.len_data[:-1])
+            end_bin_idx   = sum(datagenerator.len_data)-1
+            
+            # bin_width in neuronalreservoir does not neccesarrily correspond to that in datagenerator 
+            interval_start = (params['bin_width'] * start_bin_idx)
+            interval_end   = (params['bin_width'] * (end_bin_idx+1))
+            
+            # nrn (NEURON) の実行
+            spike_trains = datagenerator.get_spike_trains(data_idx, "training")
+            neuronalreservoir.resister_spike_events(spike_trains)
+            
+            neuronalreservoir.generate_dynamics(interval_end)
+            state_vars = neuronalreservoir.get_binned_states()
+            
+            shape_before_concatenate = self.training_state_vars.shape
+            self.training_state_vars = np.concatenate([self.training_state_vars, self.sampling(start_bin_idx, end_bin_idx)], axis=1)
+            
+            # zip の引数の順序を調整
+            if (data_idx, "training") in zip(self.batches_to_save_idx, self.batches_to_save_mode):
+                self.save_to_buffer("training", data_idx, spike_trains)
+ 
+            v_rec_array    = np.array(self.Vm_at_soma)
+            t_rec_array = np.array(self.t_rec.to_python())
+            self.spike_timings = self.spike_timings + get_spike_timings(t_rec_array, v_rec_array, threshold=-20)
+        
+            nrn.frecord_init()                   
+        
+        # ---
+        
+        # test data loop
+        # tqdmで range() をラップし、descで進捗バーの説明を設定
+        for data_idx in tqdm(range(self.datagenerator.test_dataset_size), desc="Testing Data Simulation"): 
+            # requirement for data_idx is to specify single data within training or test set
+            spike_trains = self.datagenerator.get_spike_trains(data_idx, "test")
+            
+            # datagenerator.len_data はリストや配列であると仮定
+            start_bin_idx = sum(self.datagenerator.len_data[:-1])
+            end_bin_idx   = sum(self.datagenerator.len_data)-1
+            
+            # bin_width in neuronalreservoir does not neccesarrily correspond to that in datagenerator 
+            interval_start = (self.bin_width * start_bin_idx)
+            interval_end   = (self.bin_width * (end_bin_idx+1))
+            
+            # nrn (NEURON) の実行
+            nrn.continuerun( interval_end * ms )
+            
+            self.test_state_vars = np.concatenate([self.test_state_vars, self.sampling(start_bin_idx, end_bin_idx)], axis=1)
+            
+            # zip の引数の順序を調整
+            if (data_idx, "test") in zip(self.batches_to_save_idx, self.batches_to_save_mode):
+                self.save_to_buffer("test", data_idx, spike_trains)
+ 
+            v_rec_array    = np.array(self.Vm_at_soma)
+            t_rec_array = np.array(self.t_rec.to_python())
+            self.spike_timings = self.spike_timings + get_spike_timings(t_rec_array, v_rec_array, threshold=-20)
+
+            nrn.frecord_init()
+
+
+        import sys
+        reservoir.overwrite_buffer_after_optimized()
+
+        confusion_matrix, confusion_matrix_axis = reservoir.get_classification_result("training")
+        plot_confusion_matrix(
+            confusion_matrix=confusion_matrix, 
+            labels=confusion_matrix_axis, 
+            title='Classification Confusion Matrix (Training Data)',
+            filename='../figure/confmat_train.png'
+        )
+        confusion_matrix, confusion_matrix_axis = reservoir.get_classification_result("test")
+        plot_confusion_matrix(
+            confusion_matrix=confusion_matrix, 
+            labels=confusion_matrix_axis, 
+            title='Classification Confusion Matrix (Test Data)',
+            filename='../figure/confmat_test.png'
+        )
+        np.savez("../data/classification_results.npz",
+                 confusion_matrix=confusion_matrix,
+                 axis_labels=confusion_matrix_axis)
+
+        for buffer_idx in range(len(reservoir.batches_to_save_idx)):
+            filename = "../figure/buffer" + str(buffer_idx).zfill(2) + ".png"
+            plot_timeseries(reservoir.data_buffer[buffer_idx], filename)
+
+        reservoir.save_buffer_all()
+    elif params['task']['name'] == "sinwave":
         from DataGenerator import sin_datagenerator
         
         print(f"--- Preparing Sine Wave Data (Frequency: {params['task']['freq']} Hz) ---")
