@@ -19,11 +19,55 @@ class neuronalreservoir_classification(neuronalreservoir):
 
         super().__init__(cell, prng, params)
 
+        self.train_state_vars = np.zeros((0, self.num_states))
+        self.test_state_vars = np.zeros((0, self.num_states))
+
+        self.create_records_for_buffer()
+
         self.data_buffer = []
         self.batches_to_save_idx   = params['batches_to_save_idx']
         self.batches_to_save_mode  = params['batches_to_save_mode']
 
-    def save_to_buffer(self, mode, data_idx, spike_train):
+    def create_records_for_buffer(self):
+        if self.plot_all:
+            self.buffer_variable_list = []
+            if self.record_target == 'potential':
+                total_length = 0
+                cumulative_length_dict = []
+                for sec in self.cell.all:
+                    cumulative_length = {'min':total_length, 'max':total_length+sec.L}
+                    cumulative_length_dict.append(cumulative_length)
+                    total_length += sec.L
+
+                while len(self.buffer_variable_list) < self.num_states:
+                    rec_loc = total_length * self.prng.random()
+
+                    for index, sec in enumerate(self.cell.all):
+                        if cumulative_length_dict[index]['min'] <= rec_loc and rec_loc < cumulative_length_dict[index]['max']:
+                            rec_prop = (rec_loc - cumulative_length_dict[index]['min']) / (cumulative_length_dict[index]['max'] - cumulative_length_dict[index]['min'])
+                            if hasattr(sec(rec_prop), '_ref_cai'):
+                                v = nrn.Vector().record(sec(rec_prop)._ref_cai)
+                                self.buffer_variable_list.append(v)
+                            else:
+                                break
+            elif self.record_target == 'calcium_acum':
+                total_length = 0
+                cumulative_length_dict = []
+                for sec in self.cell.all:
+                    cumulative_length = {'min':total_length, 'max':total_length+sec.L}
+                    cumulative_length_dict.append(cumulative_length)
+                    total_length += sec.L
+
+                for rec in range(self.num_states):
+                    rec_loc = total_length * self.prng.random()
+
+                    for index, sec in enumerate(self.cell.all):
+                        if cumulative_length_dict[index]['min'] <= rec_loc and rec_loc < cumulative_length_dict[index]['max']:
+                            rec_prop = (rec_loc - cumulative_length_dict[index]['min']) / (cumulative_length_dict[index]['max'] - cumulative_length_dict[index]['min'])
+                            v = nrn.Vector().record(sec(rec_prop)._ref_v)
+                            self.buffer_variable_list.append(v)
+
+    def save_to_buffer(self, mode, data_idx, spike_train, datagenerator):
         buffer = {}
         buffer['mode']         = mode
         buffer['data_idx']     = data_idx
@@ -59,46 +103,46 @@ class neuronalreservoir_classification(neuronalreservoir):
             buffer['input'] = None
 
         if mode=="training":
-            buffer['TrueLabel']     = self.datagenerator.trainseq_promptcode[buffer['data_idx']]
-            start_bin_idx      = sum(self.datagenerator.len_data[:-1])
-            end_bin_idx        = sum(self.datagenerator.len_data)-1
-            buffer['target']   = self.datagenerator.trainingdata_target[:, start_bin_idx:end_bin_idx+1]
-            buffer['output']   = self.readout_training()[:, start_bin_idx:end_bin_idx+1]
+            buffer['TrueLabel']     = datagenerator.train_label[buffer['data_idx']]
+            start_bin_idx      = sum(datagenerator.len_data[:-1])
+            end_bin_idx        = sum(datagenerator.len_data)-1
+            buffer['target']   = datagenerator.trainingdata_target[:, start_bin_idx:end_bin_idx+1]
+            buffer['output']   = self.readout(self.train_state_vars[start_bin_idx:end_bin_idx+1, :])
             buffer['time_output'] = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width
-            buffer['reservoir_state'] = self.training_state_vars[:, start_bin_idx:end_bin_idx+1]
+            buffer['reservoir_state'] = self.train_state_vars[:, start_bin_idx:end_bin_idx+1]
         elif mode=="test":
-            buffer['TrueLabel']     = self.datagenerator.testseq_promptcode[buffer['data_idx']]
-            start_bin_idx      = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:-1])
-            end_bin_idx        = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:])-1
-            buffer['target']   = self.datagenerator.testdata_target[:, start_bin_idx:end_bin_idx+1]
-            buffer['output']   = self.readout_test()[:, start_bin_idx:end_bin_idx+1]
-            buffer['time_output'] = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width + sum(self.datagenerator.len_data[:self.datagenerator.train_dataset_size]) * self.bin_width
+            buffer['TrueLabel']     = datagenerator.test_label[buffer['data_idx']]
+            start_bin_idx      = sum(datagenerator.len_data[datagenerator.train_dataset_size:-1])
+            end_bin_idx        = sum(datagenerator.len_data[datagenerator.train_dataset_size:])-1
+            buffer['target']   = datagenerator.testdata_target[:, start_bin_idx:end_bin_idx+1]
+            buffer['output']   = self.readout(self.test_state_vars[start_bin_idx:end_bin_idx+1, :])
+            buffer['time_output'] = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width + sum(datagenerator.len_data[:datagenerator.train_dataset_size]) * self.bin_width
             buffer['reservoir_state'] = self.test_state_vars[:, start_bin_idx:end_bin_idx+1]
 
         self.data_buffer.append(buffer)
 
-    def overwrite_buffer_after_optimized(self):
+    def overwrite_buffer_after_optimized(self, datagenerator):
         for buffer in self.data_buffer:
             if buffer['mode']=="training":
-                start_bin_idx      = sum(self.datagenerator.len_data[:buffer['data_idx']])
-                end_bin_idx        = sum(self.datagenerator.len_data[:buffer['data_idx']+1])-1
-                buffer['output'] = self.readout_training()[:, start_bin_idx:end_bin_idx+1]
+                start_bin_idx      = sum(datagenerator.len_data[:buffer['data_idx']])
+                end_bin_idx        = sum(datagenerator.len_data[:buffer['data_idx']+1])-1
+                buffer['output'] = self.readout()[:, start_bin_idx:end_bin_idx+1]
                 buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "training")
             elif buffer['mode']=="test":
                 start_bin_idx      = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:self.datagenerator.train_dataset_size+buffer['data_idx']])
                 end_bin_idx        = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:self.datagenerator.train_dataset_size+buffer['data_idx']+1])-1
-                buffer['output'] = self.readout_test()[:, start_bin_idx:end_bin_idx+1]
+                buffer['output'] = self.readout()[:, start_bin_idx:end_bin_idx+1]
                 buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "test")
 
     def classify(self, data_idx, mode):
         if mode=="training":
             start_bin_idx = sum(self.datagenerator.len_data[:data_idx])
             end_bin_idx   = sum(self.datagenerator.len_data[:data_idx+1])-1
-            output_within_batch = self.readout_training()[:, start_bin_idx:end_bin_idx+1]
+            output_within_batch = self.readout()[:, start_bin_idx:end_bin_idx+1]
         elif mode=="test":
             start_bin_idx = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:self.datagenerator.train_dataset_size+data_idx])
             end_bin_idx   = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:self.datagenerator.train_dataset_size+data_idx+1])-1
-            output_within_batch = self.readout_test()[:, start_bin_idx:end_bin_idx+1]
+            output_within_batch = self.readout()[:, start_bin_idx:end_bin_idx+1]
         
         winner_neuron_history = np.zeros(output_within_batch.shape[1])
         for bin_idx in range(output_within_batch.shape[1]):

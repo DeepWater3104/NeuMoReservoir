@@ -351,14 +351,16 @@ class RandomPattern_datagenerator(datagenerator):
         # インデックスの管理
         # 例: [0, 0, ..., 1, 1, ..., 9, 9] のようなラベル配列を作成しシャッフル
         # ランダムにシャッフルしてTrain/Testに分割
-        self.train_labels = np.arange(self.num_classes)
-        self.test_labels = np.repeat(np.arange(self.num_classes), self.num_test_per_class)
-        permuted_indices = self.prng.permutation(len(self.test_labels))
-        self.test_labels = self.test_labels[permuted_indices]
+        self.train_label = np.arange(self.num_classes)
+        self.test_label  = np.repeat(np.arange(self.num_classes), self.num_test_per_class)
+        permuted_indices = self.prng.permutation(len(self.test_label))
+        self.test_label  = self.test_label[permuted_indices]
 
         self.len_data = [] 
-        self.trainingdata_target = np.zeros((self.num_classes, 0))
-        self.testdata_target     = np.zeros((self.num_classes, 0))
+        #self.trainingdata_target = np.zeros((self.num_classes, 0))
+        #self.testdata_target     = np.zeros((self.num_classes, 0))
+        self.trainingdata_target = np.zeros((0, self.num_classes))
+        self.testdata_target     = np.zeros((0, self.num_classes))
 
         # --- テンプレートパターンの生成 ---
         # 各クラスに対応する「発火確率マップ（cochleogram相当）」をあらかじめ作成して固定する
@@ -446,9 +448,9 @@ class RandomPattern_datagenerator(datagenerator):
         """
         # 現在のデータ長を取得
         current_len = self.len_data[data_idx]
-        target_within_batch = np.zeros((self.num_classes, current_len))
+        target_within_batch = np.zeros((current_len, self.num_classes))
         # 正解ラベルの次元を1にする
-        target_within_batch[label_idx, :] = 1.0
+        target_within_batch[:, label_idx] = 1.0
         return target_within_batch
 
    # --- 以下、元のクラスからほぼ変更なし（NEURONとのインターフェース） ---
@@ -465,14 +467,12 @@ class RandomPattern_datagenerator(datagenerator):
         if mode=="train":
             self.len_data.append(int(self.pattern_duration_ms / self.bin_width))
             label_idx = data_idx
-            self.trainingdata_target = np.concatenate([self.trainingdata_target, self.generate_target_within_batch(data_idx,  label_idx)], axis=1)
-            print(f'debug')
-            print(spike_train.shape)
+            self.trainingdata_target = np.concatenate([self.trainingdata_target, self.generate_target_within_batch(data_idx,  label_idx)], axis=0)
             return self.class_templates[label_idx]
         elif mode=="test":
             self.len_data.append(int(self.pattern_duration_ms / self.bin_width))
-            label_idx = self.test_labels[data_idx]
-            self.testdata_target = np.concatenate([self.testdata_target, self.generate_target_within_batch(self.train_dataset_size+data_idx,  label_idx)], axis=1)
+            label_idx = self.test_label[data_idx]
+            self.testdata_target = np.concatenate([self.testdata_target, self.generate_target_within_batch(self.train_dataset_size+data_idx,  label_idx)], axis=0)
 
             # --- ジッターを加える処理 ---
             # 1. テンプレートをコピー（元のテンプレートを壊さないため）
@@ -509,7 +509,7 @@ class RandomPattern_datagenerator(datagenerator):
             # len_dataはappend済みなので、今回分を除くには [:-1]
             offset_time = sum(self.len_data[:-1]) * self.bin_width
 
-        for spike_time, synapse_idx in spike_trains:
-            abs_time = offset_time + spike_time
-            #self.exc_nc_list[int(synapse_idx)].event(abs_time)
+        spike_trains[:, 0] = spike_trains[:, 0] + offset_time
+        #for spike_time, synapse_idx in spike_trains:
+        #    spike_time = offset_time + spike_time
         return spike_trains

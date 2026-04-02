@@ -117,11 +117,13 @@ def main(cfg: DictConfig):
         params['bin_width'] = datagenerator.bin_width
 
         from NeuronalReservoir_classification import neuronalreservoir_classification
-        reservoir = neuronalreservoir_classification(cell, prng, params)
+        from Analysis import get_spike_timings
+        neuronalreservoir = neuronalreservoir_classification(cell, prng, params)
         nrn.finitialize(-65 * mV)
 
         from tqdm import tqdm
         for data_idx in tqdm(range(datagenerator.train_dataset_size), desc="Training Data Simulation"): 
+            spike_trains = datagenerator.get_spike_trains(data_idx, "train")
             
             # datagenerator.len_data はリストや配列であると仮定
             start_bin_idx = sum(datagenerator.len_data[:-1])
@@ -130,24 +132,25 @@ def main(cfg: DictConfig):
             # bin_width in neuronalreservoir does not neccesarrily correspond to that in datagenerator 
             interval_start = (params['bin_width'] * start_bin_idx)
             interval_end   = (params['bin_width'] * (end_bin_idx+1))
-            
+
             # nrn (NEURON) の実行
-            spike_trains = datagenerator.get_spike_trains(data_idx, "training")
             neuronalreservoir.resister_spike_events(spike_trains)
-            
             neuronalreservoir.generate_dynamics(interval_end)
             state_vars = neuronalreservoir.get_binned_states()
             
-            shape_before_concatenate = self.training_state_vars.shape
-            self.training_state_vars = np.concatenate([self.training_state_vars, self.sampling(start_bin_idx, end_bin_idx)], axis=1)
+            shape_before_concatenate = neuronalreservoir.train_state_vars.shape
+            neuronalreservoir.train_state_vars = np.concatenate([neuronalreservoir.train_state_vars, state_vars], axis=0)
+            print(f'debug train_state_vars.shape {neuronalreservoir.train_state_vars.shape}')
             
             # zip の引数の順序を調整
-            if (data_idx, "training") in zip(self.batches_to_save_idx, self.batches_to_save_mode):
-                self.save_to_buffer("training", data_idx, spike_trains)
+            if (data_idx, "training") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
+                neuronalreservoir.save_to_buffer("training", data_idx, spike_trains, datagenerator)
  
-            v_rec_array    = np.array(self.Vm_at_soma)
-            t_rec_array = np.array(self.t_rec.to_python())
-            self.spike_timings = self.spike_timings + get_spike_timings(t_rec_array, v_rec_array, threshold=-20)
+            v_rec_array    = np.array(neuronalreservoir.Vm_at_soma)
+            t_rec_array = np.array(neuronalreservoir.t_rec.to_python())
+            neuronalreservoir.spike_timings = neuronalreservoir.spike_timings + get_spike_timings(t_rec_array, v_rec_array, threshold=-20)
+
+            print(f'batch interval {neuronalreservoir.t_rec[0]} to {neuronalreservoir.t_rec[-1]}')
         
             nrn.frecord_init()                   
         
@@ -155,45 +158,46 @@ def main(cfg: DictConfig):
         
         # test data loop
         # tqdmで range() をラップし、descで進捗バーの説明を設定
-        for data_idx in tqdm(range(self.datagenerator.test_dataset_size), desc="Testing Data Simulation"): 
-            # requirement for data_idx is to specify single data within training or test set
-            spike_trains = self.datagenerator.get_spike_trains(data_idx, "test")
+        for data_idx in tqdm(range(datagenerator.test_dataset_size), desc="Testing Data Simulation"): 
+            spike_trains = datagenerator.get_spike_trains(data_idx, "test")
             
             # datagenerator.len_data はリストや配列であると仮定
-            start_bin_idx = sum(self.datagenerator.len_data[:-1])
-            end_bin_idx   = sum(self.datagenerator.len_data)-1
+            start_bin_idx = sum(datagenerator.len_data[:-1])
+            end_bin_idx   = sum(datagenerator.len_data)-1
             
             # bin_width in neuronalreservoir does not neccesarrily correspond to that in datagenerator 
-            interval_start = (self.bin_width * start_bin_idx)
-            interval_end   = (self.bin_width * (end_bin_idx+1))
-            
+            interval_start = (neuronalreservoir.bin_width * start_bin_idx)
+            interval_end   = (neuronalreservoir.bin_width * (end_bin_idx+1))
+
             # nrn (NEURON) の実行
-            nrn.continuerun( interval_end * ms )
+            neuronalreservoir.resister_spike_events(spike_trains)
+            neuronalreservoir.generate_dynamics(interval_end)
+            state_vars = neuronalreservoir.get_binned_states()
             
-            self.test_state_vars = np.concatenate([self.test_state_vars, self.sampling(start_bin_idx, end_bin_idx)], axis=1)
+            neuronalreservoir.test_state_vars  = np.concatenate([neuronalreservoir.test_state_vars, state_vars], axis=0)
+            #neuronalreservoir.train_state_vars = np.concatenate([neuronalreservoir.train_state_vars, state_vars], axis=0)
             
             # zip の引数の順序を調整
-            if (data_idx, "test") in zip(self.batches_to_save_idx, self.batches_to_save_mode):
-                self.save_to_buffer("test", data_idx, spike_trains)
+            if (data_idx, "test") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
+                neuronalreservoir.save_to_buffer("test", data_idx, spike_trains, datagenerator)
  
-            v_rec_array    = np.array(self.Vm_at_soma)
-            t_rec_array = np.array(self.t_rec.to_python())
-            self.spike_timings = self.spike_timings + get_spike_timings(t_rec_array, v_rec_array, threshold=-20)
+            v_rec_array    = np.array(neuronalreservoir.Vm_at_soma)
+            t_rec_array = np.array(neuronalreservoir.t_rec.to_python())
+            neuronalreservoir.spike_timings = neuronalreservoir.spike_timings + get_spike_timings(t_rec_array, v_rec_array, threshold=-20)
 
             nrn.frecord_init()
 
+        neuronalreservoir.optimize(neuronalreservoir.train_state_vars, datagenerator.trainingdata_target)
+        neuronalreservoir.overwrite_buffer_after_optimized(datagenerator)
 
-        import sys
-        reservoir.overwrite_buffer_after_optimized()
-
-        confusion_matrix, confusion_matrix_axis = reservoir.get_classification_result("training")
+        confusion_matrix, confusion_matrix_axis = neuronalreservoir.get_classification_result("training")
         plot_confusion_matrix(
             confusion_matrix=confusion_matrix, 
             labels=confusion_matrix_axis, 
             title='Classification Confusion Matrix (Training Data)',
             filename='../figure/confmat_train.png'
         )
-        confusion_matrix, confusion_matrix_axis = reservoir.get_classification_result("test")
+        confusion_matrix, confusion_matrix_axis = neuronalreservoir.get_classification_result("test")
         plot_confusion_matrix(
             confusion_matrix=confusion_matrix, 
             labels=confusion_matrix_axis, 
@@ -204,11 +208,11 @@ def main(cfg: DictConfig):
                  confusion_matrix=confusion_matrix,
                  axis_labels=confusion_matrix_axis)
 
-        for buffer_idx in range(len(reservoir.batches_to_save_idx)):
+        for buffer_idx in range(len(neuronalreservoir.batches_to_save_idx)):
             filename = "../figure/buffer" + str(buffer_idx).zfill(2) + ".png"
-            plot_timeseries(reservoir.data_buffer[buffer_idx], filename)
+            plot_timeseries(neuronalreservoir.data_buffer[buffer_idx], filename)
 
-        reservoir.save_buffer_all()
+        neuronalreservoir.save_buffer_all()
     elif params['task']['name'] == "sinwave":
         from DataGenerator import sin_datagenerator
         
