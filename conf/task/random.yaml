@@ -4,7 +4,7 @@ datagenerator_type: "RandomPattern_datagenerator"
 n_repetition: 5
 num_outputs: 10
 exc_num_syn: 78
-exc_syn_weight: 0.001
+exc_syn_weight: 0.002
 maximum_firing_rate: 10
 plot_all: true
 firing_rate: 10 # Hz

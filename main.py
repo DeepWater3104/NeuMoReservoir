@@ -128,6 +128,7 @@ def main(cfg: DictConfig):
             # datagenerator.len_data はリストや配列であると仮定
             start_bin_idx = sum(datagenerator.len_data[:-1])
             end_bin_idx   = sum(datagenerator.len_data)-1
+            num_bins = end_bin_idx - start_bin_idx + 1
             
             # bin_width in neuronalreservoir does not neccesarrily correspond to that in datagenerator 
             interval_start = (params['bin_width'] * start_bin_idx)
@@ -136,11 +137,10 @@ def main(cfg: DictConfig):
             # nrn (NEURON) の実行
             neuronalreservoir.resister_spike_events(spike_trains)
             neuronalreservoir.generate_dynamics(interval_end)
-            state_vars = neuronalreservoir.get_binned_states()
+            state_vars = neuronalreservoir.get_binned_states(interval_start, num_bins)
             
             shape_before_concatenate = neuronalreservoir.train_state_vars.shape
             neuronalreservoir.train_state_vars = np.concatenate([neuronalreservoir.train_state_vars, state_vars], axis=0)
-            print(f'debug train_state_vars.shape {neuronalreservoir.train_state_vars.shape}')
             
             # zip の引数の順序を調整
             if (data_idx, "training") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
@@ -150,10 +150,11 @@ def main(cfg: DictConfig):
             t_rec_array = np.array(neuronalreservoir.t_rec.to_python())
             neuronalreservoir.spike_timings = neuronalreservoir.spike_timings + get_spike_timings(t_rec_array, v_rec_array, threshold=-20)
 
-            print(f'batch interval {neuronalreservoir.t_rec[0]} to {neuronalreservoir.t_rec[-1]}')
-        
             nrn.frecord_init()                   
         
+        neuronalreservoir.optimize(neuronalreservoir.train_state_vars, datagenerator.trainingdata_target)
+        print(f'debug')
+        print(f'state_vars.shape: {neuronalreservoir.train_state_vars.shape}')
         # ---
         
         # test data loop
@@ -164,6 +165,7 @@ def main(cfg: DictConfig):
             # datagenerator.len_data はリストや配列であると仮定
             start_bin_idx = sum(datagenerator.len_data[:-1])
             end_bin_idx   = sum(datagenerator.len_data)-1
+            num_bins = end_bin_idx - start_bin_idx + 1
             
             # bin_width in neuronalreservoir does not neccesarrily correspond to that in datagenerator 
             interval_start = (neuronalreservoir.bin_width * start_bin_idx)
@@ -172,7 +174,7 @@ def main(cfg: DictConfig):
             # nrn (NEURON) の実行
             neuronalreservoir.resister_spike_events(spike_trains)
             neuronalreservoir.generate_dynamics(interval_end)
-            state_vars = neuronalreservoir.get_binned_states()
+            state_vars = neuronalreservoir.get_binned_states(interval_start, num_bins)
             
             neuronalreservoir.test_state_vars  = np.concatenate([neuronalreservoir.test_state_vars, state_vars], axis=0)
             #neuronalreservoir.train_state_vars = np.concatenate([neuronalreservoir.train_state_vars, state_vars], axis=0)
@@ -187,7 +189,6 @@ def main(cfg: DictConfig):
 
             nrn.frecord_init()
 
-        neuronalreservoir.optimize(neuronalreservoir.train_state_vars, datagenerator.trainingdata_target)
         neuronalreservoir.overwrite_buffer_after_optimized(datagenerator)
 
         confusion_matrix, confusion_matrix_axis = neuronalreservoir.get_classification_result("training")
@@ -237,8 +238,9 @@ def main(cfg: DictConfig):
         spike_trains = datagenerator.get_spike_trains()
         nrn.finitialize(-65 * mV)
         neuronalreservoir.resister_spike_events(spike_trains)
-        neuronalreservoir.generate_dynamics((params['task']['len_transientdata']+params['task']['len_trainingdata']+params['task']['len_testdata']) * params['bin_width'])
-        state_vars = neuronalreservoir.get_binned_states()
+        num_bins = params['task']['len_transientdata'] + params['task']['len_trainingdata'] + params['task']['len_testdata']
+        neuronalreservoir.generate_dynamics(num_bins * params['bin_width'])
+        state_vars = neuronalreservoir.get_binned_states(0, num_bins)
         neuronalreservoir.optimize(state_vars[params['task']['len_transientdata']:params['task']['len_transientdata']+params['task']['len_trainingdata'], :], datagenerator.trainingdata_target)
         output = neuronalreservoir.readout(state_vars)
 

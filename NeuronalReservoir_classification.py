@@ -104,19 +104,19 @@ class neuronalreservoir_classification(neuronalreservoir):
 
         if mode=="training":
             buffer['TrueLabel']     = datagenerator.train_label[buffer['data_idx']]
-            start_bin_idx      = sum(datagenerator.len_data[:-1])
-            end_bin_idx        = sum(datagenerator.len_data)-1
-            buffer['target']   = datagenerator.trainingdata_target[:, start_bin_idx:end_bin_idx+1]
-            buffer['output']   = self.readout(self.train_state_vars[start_bin_idx:end_bin_idx+1, :])
-            buffer['time_output'] = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width
+            start_bin_idx           = sum(datagenerator.len_data[:-1])
+            end_bin_idx             = sum(datagenerator.len_data)-1
+            buffer['target']        = datagenerator.trainingdata_target[:, start_bin_idx:end_bin_idx+1]
+            buffer['output']        = self.readout(self.train_state_vars[start_bin_idx:end_bin_idx+1, :])
+            buffer['time_output']   = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width
             buffer['reservoir_state'] = self.train_state_vars[:, start_bin_idx:end_bin_idx+1]
         elif mode=="test":
             buffer['TrueLabel']     = datagenerator.test_label[buffer['data_idx']]
-            start_bin_idx      = sum(datagenerator.len_data[datagenerator.train_dataset_size:-1])
-            end_bin_idx        = sum(datagenerator.len_data[datagenerator.train_dataset_size:])-1
-            buffer['target']   = datagenerator.testdata_target[:, start_bin_idx:end_bin_idx+1]
-            buffer['output']   = self.readout(self.test_state_vars[start_bin_idx:end_bin_idx+1, :])
-            buffer['time_output'] = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width + sum(datagenerator.len_data[:datagenerator.train_dataset_size]) * self.bin_width
+            start_bin_idx           = sum(datagenerator.len_data[datagenerator.train_dataset_size:-1])
+            end_bin_idx             = sum(datagenerator.len_data[datagenerator.train_dataset_size:])-1
+            buffer['target']        = datagenerator.testdata_target[:, start_bin_idx:end_bin_idx+1]
+            buffer['output']        = self.readout(self.test_state_vars[start_bin_idx:end_bin_idx+1, :])
+            buffer['time_output']   = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width + sum(datagenerator.len_data[:datagenerator.train_dataset_size]) * self.bin_width
             buffer['reservoir_state'] = self.test_state_vars[:, start_bin_idx:end_bin_idx+1]
 
         self.data_buffer.append(buffer)
@@ -124,14 +124,14 @@ class neuronalreservoir_classification(neuronalreservoir):
     def overwrite_buffer_after_optimized(self, datagenerator):
         for buffer in self.data_buffer:
             if buffer['mode']=="training":
-                start_bin_idx      = sum(datagenerator.len_data[:buffer['data_idx']])
-                end_bin_idx        = sum(datagenerator.len_data[:buffer['data_idx']+1])-1
-                buffer['output'] = self.readout()[:, start_bin_idx:end_bin_idx+1]
+                start_bin_idx            = sum(datagenerator.len_data[:buffer['data_idx']])
+                end_bin_idx              = sum(datagenerator.len_data[:buffer['data_idx']+1])-1
+                buffer['output']         = self.readout()[:, start_bin_idx:end_bin_idx+1]
                 buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "training")
             elif buffer['mode']=="test":
-                start_bin_idx      = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:self.datagenerator.train_dataset_size+buffer['data_idx']])
-                end_bin_idx        = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:self.datagenerator.train_dataset_size+buffer['data_idx']+1])-1
-                buffer['output'] = self.readout()[:, start_bin_idx:end_bin_idx+1]
+                start_bin_idx            = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:self.datagenerator.train_dataset_size+buffer['data_idx']])
+                end_bin_idx              = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:self.datagenerator.train_dataset_size+buffer['data_idx']+1])-1
+                buffer['output']         = self.readout()[:, start_bin_idx:end_bin_idx+1]
                 buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "test")
 
     def classify(self, data_idx, mode):

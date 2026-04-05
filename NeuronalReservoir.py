@@ -229,10 +229,10 @@ class neuronalreservoir():
     def generate_dynamics(self, total_duration):
         nrn.continuerun( total_duration * ms)
 
-    def get_binned_states(self):
+    def get_binned_states(self, interval_start, num_bins):
         t_rec = np.array(self.t_rec.to_python())
         v_rec = np.column_stack([np.array(v.to_python()) for v in self.v_rec_list])
-        t_start = t_rec[0]
+        t_start = interval_start
         t_end   = t_rec[-1]
 
         # 1. 時間刻みの計算 (dt) を先に計算
@@ -243,7 +243,7 @@ class neuronalreservoir():
         # t_startからの相対時間で計算
         t_relative = t_rec - t_start
         bin_indices = (t_relative / self.bin_width).astype(int)
-        num_bins = int((t_end - t_start) / self.bin_width)
+        #num_bins = int((t_end - t_start) / self.bin_width)
         bin_indices = np.clip(bin_indices, 0, num_bins - 1)
         
         # 3. 重み付き状態量の計算
@@ -261,4 +261,3 @@ class neuronalreservoir():
 
     def optimize(self, state_vars, target):
         self.W = np.linalg.inv(np.transpose(state_vars) @ state_vars + self.reg*np.eye(self.num_states)) @ np.transpose(state_vars) @ target
-        self.W = self.datagenerator.trainingdata_target @ np.transpose(state_vars) @ np.linalg.inv(state_vars @ state_vars.transpose() + self.reg*np.eye(self.num_states+1))
