@@ -109,15 +109,15 @@ class neuronalreservoir_classification(neuronalreservoir):
             buffer['target']        = datagenerator.trainingdata_target[:, start_bin_idx:end_bin_idx+1]
             buffer['output']        = self.readout(self.train_state_vars[start_bin_idx:end_bin_idx+1, :])
             buffer['time_output']   = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width
-            buffer['reservoir_state'] = self.train_state_vars[:, start_bin_idx:end_bin_idx+1]
+            buffer['reservoir_state'] = self.train_state_vars[start_bin_idx:end_bin_idx+1, :]
         elif mode=="test":
             buffer['TrueLabel']     = datagenerator.test_label[buffer['data_idx']]
             start_bin_idx           = sum(datagenerator.len_data[datagenerator.train_dataset_size:-1])
             end_bin_idx             = sum(datagenerator.len_data[datagenerator.train_dataset_size:])-1
-            buffer['target']        = datagenerator.testdata_target[:, start_bin_idx:end_bin_idx+1]
+            buffer['target']        = datagenerator.testdata_target[start_bin_idx:end_bin_idx+1, :]
             buffer['output']        = self.readout(self.test_state_vars[start_bin_idx:end_bin_idx+1, :])
             buffer['time_output']   = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width + sum(datagenerator.len_data[:datagenerator.train_dataset_size]) * self.bin_width
-            buffer['reservoir_state'] = self.test_state_vars[:, start_bin_idx:end_bin_idx+1]
+            buffer['reservoir_state'] = self.test_state_vars[start_bin_idx:end_bin_idx+1, :]
 
         self.data_buffer.append(buffer)
 
@@ -126,45 +126,46 @@ class neuronalreservoir_classification(neuronalreservoir):
             if buffer['mode']=="training":
                 start_bin_idx            = sum(datagenerator.len_data[:buffer['data_idx']])
                 end_bin_idx              = sum(datagenerator.len_data[:buffer['data_idx']+1])-1
-                buffer['output']         = self.readout()[:, start_bin_idx:end_bin_idx+1]
-                buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "training")
+                buffer['output']         = self.readout(buffer['reservoir_state'])
+                buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "training", datagenerator)
             elif buffer['mode']=="test":
-                start_bin_idx            = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:self.datagenerator.train_dataset_size+buffer['data_idx']])
-                end_bin_idx              = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:self.datagenerator.train_dataset_size+buffer['data_idx']+1])-1
-                buffer['output']         = self.readout()[:, start_bin_idx:end_bin_idx+1]
-                buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "test")
+                start_bin_idx            = sum(datagenerator.len_data[datagenerator.train_dataset_size:datagenerator.train_dataset_size+buffer['data_idx']])
+                end_bin_idx              = sum(datagenerator.len_data[datagenerator.train_dataset_size:datagenerator.train_dataset_size+buffer['data_idx']+1])-1
+                buffer['output']         = self.readout(buffer['reservoir_state'])
+                buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "test", datagenerator)
 
-    def classify(self, data_idx, mode):
+    def classify(self, data_idx, mode, datagenerator):
         if mode=="training":
-            start_bin_idx = sum(self.datagenerator.len_data[:data_idx])
-            end_bin_idx   = sum(self.datagenerator.len_data[:data_idx+1])-1
-            output_within_batch = self.readout()[:, start_bin_idx:end_bin_idx+1]
+            start_bin_idx = sum(datagenerator.len_data[:data_idx])
+            end_bin_idx   = sum(datagenerator.len_data[:data_idx+1])-1
+            output_within_batch = self.readout(self.train_state_vars[start_bin_idx:end_bin_idx+1, :])
         elif mode=="test":
-            start_bin_idx = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:self.datagenerator.train_dataset_size+data_idx])
-            end_bin_idx   = sum(self.datagenerator.len_data[self.datagenerator.train_dataset_size:self.datagenerator.train_dataset_size+data_idx+1])-1
-            output_within_batch = self.readout()[:, start_bin_idx:end_bin_idx+1]
+            start_bin_idx = sum(datagenerator.len_data[datagenerator.train_dataset_size:datagenerator.train_dataset_size+data_idx])
+            end_bin_idx   = sum(datagenerator.len_data[datagenerator.train_dataset_size:datagenerator.train_dataset_size+data_idx+1])-1
+            output_within_batch = self.readout(self.test_state_vars[start_bin_idx:end_bin_idx+1, :])
         
-        winner_neuron_history = np.zeros(output_within_batch.shape[1])
-        for bin_idx in range(output_within_batch.shape[1]):
-            winner_neuron = np.argmax(output_within_batch[:, bin_idx])
+        winner_neuron_history = np.zeros(output_within_batch.shape[0])
+        for bin_idx in range(output_within_batch.shape[0]):
+            winner_neuron = np.argmax(output_within_batch[bin_idx, :])
             winner_neuron_history[bin_idx] = winner_neuron
 
         unique, freq = np.unique(winner_neuron_history, return_counts=True)
         mode = unique[np.argmax(freq)]
         return mode
 
-    def get_classification_result(self, mode):
-        confusion_matrix_axis = np.unique(self.datagenerator.testseq_promptcode, return_counts=False)
+    def get_classification_result(self, mode, datagenerator):
+        confusion_matrix_axis = np.unique(datagenerator.test_label, return_counts=False)
         num_unique_prompts = np.size(confusion_matrix_axis)
         confusion_matrix = np.zeros((num_unique_prompts, num_unique_prompts)) # axis 0 is prediction axis 1 is ground truth
         if mode=="training":
-            for data_idx in range(self.datagenerator.train_dataset_size):
-                predicted = self.classify(data_idx, "training")
-                confusion_matrix[int(predicted), (self.datagenerator.trainseq_promptcode[data_idx])] += 1
+            for data_idx in range(datagenerator.train_dataset_size):
+                predicted = self.classify(data_idx, "training", datagenerator)
+                print(f'true {int(datagenerator.train_label[data_idx])}')
+                confusion_matrix[int(predicted), int(datagenerator.train_label[data_idx])] += 1
         elif mode=="test":
-            for data_idx in range(self.datagenerator.test_dataset_size):
-                predicted = self.classify(data_idx, "test")
-                confusion_matrix[int(predicted), int(self.datagenerator.testseq_promptcode[data_idx])] += 1
+            for data_idx in range(datagenerator.test_dataset_size):
+                predicted = self.classify(data_idx, "test", datagenerator)
+                confusion_matrix[int(predicted), int(datagenerator.test_label[data_idx])] += 1
 
         return confusion_matrix, confusion_matrix_axis
 
@@ -381,3 +382,5 @@ def shuffle_dataset_codes_numpy(seq_code, prng: np.random.Generator):
     
     print(f"データセットのシャッフルが完了しました。Keys: {keys}, サイズ: {data_length}")
     return seq_code
+
+

@@ -2,6 +2,9 @@
 defaults:
   - task: random
   - _self_
+hydra:
+  job:
+    chdir: True  # これをTrueにすると、プログラム実行中に自動でoutputs/...に移動します
 
 # Shared parameters across different tasks and models
 num_states: 100

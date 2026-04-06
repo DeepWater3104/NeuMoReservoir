@@ -2,7 +2,7 @@
 name: "random"
 datagenerator_type: "RandomPattern_datagenerator"
 n_repetition: 5
-num_outputs: 10
+num_outputs: 2
 exc_num_syn: 78
 exc_syn_weight: 0.002
 maximum_firing_rate: 10

@@ -29,7 +29,7 @@ def main(cfg: DictConfig):
 
     # 1. Compile MOD files (Only if necessary or environment changed)
     from neuron_simulation import run_nrnivmodl
-    cell_dir = "./cells/cell1/" # This path should eventually come from cfg
+    cell_dir = "../../../cells/cell1/" # This path should eventually come from cfg
     run_nrnivmodl(cell_dir)
     
     # 2. Load Cell Model
@@ -153,8 +153,6 @@ def main(cfg: DictConfig):
             nrn.frecord_init()                   
         
         neuronalreservoir.optimize(neuronalreservoir.train_state_vars, datagenerator.trainingdata_target)
-        print(f'debug')
-        print(f'state_vars.shape: {neuronalreservoir.train_state_vars.shape}')
         # ---
         
         # test data loop
@@ -191,14 +189,15 @@ def main(cfg: DictConfig):
 
         neuronalreservoir.overwrite_buffer_after_optimized(datagenerator)
 
-        confusion_matrix, confusion_matrix_axis = neuronalreservoir.get_classification_result("training")
+        confusion_matrix, confusion_matrix_axis = neuronalreservoir.get_classification_result("training", datagenerator)
+        from NeuronalReservoir_classification import plot_confusion_matrix
         plot_confusion_matrix(
             confusion_matrix=confusion_matrix, 
             labels=confusion_matrix_axis, 
             title='Classification Confusion Matrix (Training Data)',
             filename='../figure/confmat_train.png'
         )
-        confusion_matrix, confusion_matrix_axis = neuronalreservoir.get_classification_result("test")
+        confusion_matrix, confusion_matrix_axis = neuronalreservoir.get_classification_result("test", datagenerator)
         plot_confusion_matrix(
             confusion_matrix=confusion_matrix, 
             labels=confusion_matrix_axis, 
