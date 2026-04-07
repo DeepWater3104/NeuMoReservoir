@@ -73,34 +73,34 @@ class neuronalreservoir_classification(neuronalreservoir):
         buffer['data_idx']     = data_idx
 
         buffer['variables']    = []
-        v_rec_np = np.array([np.array(v_rec.to_python()) for v_rec in self.v_rec_list])
+        v_rec_np = np.stack([v_rec.to_python() for v_rec in self.v_rec_list], axis=1)
         buffer['variables'].append(v_rec_np)
         v_rec_np = np.stack([v_rec.to_python() for v_rec in self.buffer_variable_list], axis=1)
         buffer['variables'].append(v_rec_np)
         buffer['t_rec']        = np.array(self.t_rec.to_python())
     
-        num_input_neurons = len(spike_train)
-        num_spikes = 0
-        for neuron_idx in range(num_input_neurons):
-            num_spikes += len(spike_train[neuron_idx])
+        #num_input_neurons = len(spike_train)
+        #num_spikes = 0
+        #for neuron_idx in range(num_input_neurons):
+        #    num_spikes += len(spike_train[neuron_idx])
         
         # スパイクがない場合のNaN処理を考慮 (例: 1以上のスパイクがある場合のみ実行)
-        if num_spikes > 0:
-            spike_times = np.zeros(num_spikes)
-            spike_neurons = np.zeros(num_spikes)
-            spike_idx = 0
-            for neuron_idx, spike_train in enumerate(spike_train):
-                for spike_time in spike_train:
-                    spike_times[spike_idx]    = spike_time
-                    spike_neurons[spike_idx] = neuron_idx
-                    spike_idx += 1
+        #if num_spikes > 0:
+        #    spike_times = np.zeros(num_spikes)
+        #    spike_neurons = np.zeros(num_spikes)
+        #    spike_idx = 0
+        #    for neuron_idx, spike_train in enumerate(spike_train):
+        #        for spike_time in spike_train:
+        #            spike_times[spike_idx]    = spike_time
+        #            spike_neurons[spike_idx] = neuron_idx
+        #            spike_idx += 1
 
-            buffer['input'] = {}
-            buffer['input']['spike_times']   = spike_times
-            buffer['input']['spike_neurons'] = spike_neurons
+        buffer['input'] = {}
+        buffer['input']['spike_times']   = spike_train[:, 0]
+        buffer['input']['spike_neurons'] = spike_train[:, 1]
 
-        else:
-            buffer['input'] = None
+        #else:
+        #    buffer['input'] = None
 
         if mode=="training":
             buffer['TrueLabel']     = datagenerator.train_label[buffer['data_idx']]
@@ -256,8 +256,8 @@ def plot_timeseries(buffer, filename, detailed_reservoir_layer_plot=True):
         
         ax_reservoir_list = []
         ax_reservoir = fig.add_subplot(gs_reservoir[0, 0])
-        for i in range(buffer['variables'][0].shape[0]):
-            ax_reservoir.plot(buffer['t_rec'], buffer['variables'][0][i, :], linewidth=1.2) # 線幅を調整
+        for i in range(buffer['variables'][0].shape[1]):
+            ax_reservoir.plot(buffer['t_rec'], buffer['variables'][0][:, i], linewidth=1.2) # 線幅を調整
         
         ax_reservoir_list.append(ax_reservoir)
 
