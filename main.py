@@ -10,6 +10,9 @@ def main(cfg: DictConfig):
     """
     # Convert DictConfig to a standard Python dictionary for compatibility with existing classes
     params = OmegaConf.to_container(cfg, resolve=True)
+    import os
+    os.makedirs("figure", exist_ok=True)
+    os.makedirs("data", exist_ok=True)
     
     # Print the resolved configuration to the console for verification
     print("--- Simulation Configuration ---")
@@ -29,7 +32,7 @@ def main(cfg: DictConfig):
 
     # 1. Compile MOD files (Only if necessary or environment changed)
     from neuron_simulation import run_nrnivmodl
-    cell_dir = "../../../cells/cell1/" # This path should eventually come from cfg
+    cell_dir = "../../../cells/cell1/"
     run_nrnivmodl(cell_dir)
     
     # 2. Load Cell Model
@@ -49,49 +52,7 @@ def main(cfg: DictConfig):
     else:
         cell = getattr(nrn, template_name)(cell_dir + "morphology", morph_path.name)
 
-
-    # --- 3. DataGenerator Type Specific Setup ---
-    if params['task']['datagenerator_type'] == "ti46":
-        # Import the speaker-specific dataset codes from TI46Subset.py
-        from TI46Subset import trainseq_code, testseq_code
-        from DataGenerator import TI46word_datagenerator
-        
-        # Create copies of the original lists to avoid mutating global variables
-        train_code = trainseq_code.copy()
-        test_code = testseq_code.copy()
-        
-        # Implement dataset repetition and shuffling logic here
-        # These functions were originally in your classification scripts
-        from NeuronalReservoir_classification import neuronalreservoir_classification, repeat_dataset_codes, shuffle_dataset_codes_numpy
-        
-        # Repeat and shuffle training data
-        # Accessing 'n_repetition' from the task-specific YAML configuration
-        print(f"--- Preparing training data (Repetition: {params['task']['n_repetition']}x) ---")
-        train_code = repeat_dataset_codes(train_code, n_times=params['task']['n_repetition'])
-        train_code = shuffle_dataset_codes_numpy(train_code, prng)
-        
-        # Repeat and shuffle test data
-        print(f"--- Preparing test data (Repetition: {params['task']['n_repetition']}x) ---")
-        test_code = repeat_dataset_codes(test_code, n_times=params['task']['n_repetition'])
-        test_code = shuffle_dataset_codes_numpy(test_code, prng)
-
-        # Instantiate the data generator
-        # path_to_dataset should eventually be moved to your YAML config
-        datagenerator = TI46word_datagenerator(
-            params=params['task'],
-            prng=prng,
-            trainseq_code=train_code,
-            testseq_code=test_code,
-            path_to_dataset="./dataset/ti46/ti20/"
-        )
-        
-        # Synchronize bin_width from datagenerator to the global params
-        params['bin_width'] = datagenerator.bin_width
-        print(f"DataGenerator initialized with bin_width: {params['bin_width']} ms")
-
-        spike_trains = datagenerator.get_spike_trains(data_idx=0, mode='train')
-
-    elif params['task']['name'] == "random":
+    if params['task']['name'] == "random":
         from DataGenerator import RandomPattern_datagenerator
         datagenerator = RandomPattern_datagenerator(params['task'], prng)
 
@@ -195,21 +156,22 @@ def main(cfg: DictConfig):
             confusion_matrix=confusion_matrix, 
             labels=confusion_matrix_axis, 
             title='Classification Confusion Matrix (Training Data)',
-            filename='../figure/confmat_train.png'
+            filename='./figure/confmat_train.png'
         )
         confusion_matrix, confusion_matrix_axis = neuronalreservoir.get_classification_result("test", datagenerator)
         plot_confusion_matrix(
             confusion_matrix=confusion_matrix, 
             labels=confusion_matrix_axis, 
             title='Classification Confusion Matrix (Test Data)',
-            filename='../figure/confmat_test.png'
+            filename='./figure/confmat_test.png'
         )
-        np.savez("../data/classification_results.npz",
+        np.savez("./data/classification_results.npz",
                  confusion_matrix=confusion_matrix,
                  axis_labels=confusion_matrix_axis)
 
+        from NeuronalReservoir_classification import plot_timeseries
         for buffer_idx in range(len(neuronalreservoir.batches_to_save_idx)):
-            filename = "../figure/buffer" + str(buffer_idx).zfill(2) + ".png"
+            filename = "./figure/buffer" + str(buffer_idx).zfill(2) + ".png"
             plot_timeseries(neuronalreservoir.data_buffer[buffer_idx], filename)
 
         neuronalreservoir.save_buffer_all()
