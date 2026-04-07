@@ -474,22 +474,19 @@ class RandomPattern_datagenerator(datagenerator):
             label_idx = self.test_label[data_idx]
             self.testdata_target = np.concatenate([self.testdata_target, self.generate_target_within_batch(self.train_dataset_size+data_idx,  label_idx)], axis=0)
 
-            # --- ジッターを加える処理 ---
-            # 1. テンプレートをコピー（元のテンプレートを壊さないため）
-            spiketrain = self.class_templates[label_idx].copy().astype(np.float64)
-            
-            # 2. ジッター（ガウスノイズ）を生成
-            # spiketrain[:, 0] が spike_times です
-            noise = self.prng.normal(loc=0, scale=self.jitter_std, size=spiketrain[:, 0].shape)
-            
-            # 3. 時刻の列にだけノイズを加える
+            template = self.class_templates[label_idx]
+            spiketrain = template.copy().astype(np.float64)
+
+            # ノイズ付加
+            noise = self.prng.normal(0, self.jitter_std, size=spiketrain.shape[0])
             spiketrain[:, 0] += noise
+
+            # 境界処理: Clipではなく、範囲内のものだけを抽出（Boolean Indexing）
+            mask = (spiketrain[:, 0] >= 0) & (spiketrain[:, 0] <= self.pattern_duration_ms)
+            spiketrain = spiketrain[mask]
             
-            # 4. 時刻がマイナスにならないようにクリップし、時間順に再ソート
-            spiketrain[:, 0] = np.clip(spiketrain[:, 0], 0, self.pattern_duration_ms)
-            spiketrain = spiketrain[spiketrain[:, 0].argsort()]
-            
-            return spiketrain
+            # ソート
+            return spiketrain[spiketrain[:, 0].argsort()]
         
     def get_spike_trains(self, data_idx, mode):
         """
@@ -509,7 +506,8 @@ class RandomPattern_datagenerator(datagenerator):
             # len_dataはappend済みなので、今回分を除くには [:-1]
             offset_time = sum(self.len_data[:-1]) * self.bin_width
 
-        spike_trains[:, 0] = spike_trains[:, 0] + offset_time
-        #for spike_time, synapse_idx in spike_trains:
-        #    spike_time = offset_time + spike_time
-        return spike_trains
+        #spike_train_biased = spike_trains
+        spike_train_biased = spike_trains.copy()
+        spike_train_biased[:, 0] += offset_time
+
+        return spike_train_biased
