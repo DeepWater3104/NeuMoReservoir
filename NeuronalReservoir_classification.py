@@ -72,10 +72,10 @@ class neuronalreservoir_classification(neuronalreservoir):
         buffer['mode']         = mode
         buffer['data_idx']     = data_idx
 
-        v_rec_np = np.array([np.array(v_rec.to_python()) for v_rec in self.v_rec_list])
         buffer['variables']    = []
+        v_rec_np = np.array([np.array(v_rec.to_python()) for v_rec in self.v_rec_list])
         buffer['variables'].append(v_rec_np)
-        v_rec_np = np.array([np.array(v_rec.to_python()) for v_rec in self.buffer_variable_list])
+        v_rec_np = np.stack([v_rec.to_python() for v_rec in self.buffer_variable_list], axis=1)
         buffer['variables'].append(v_rec_np)
         buffer['t_rec']        = np.array(self.t_rec.to_python())
     
@@ -106,7 +106,7 @@ class neuronalreservoir_classification(neuronalreservoir):
             buffer['TrueLabel']     = datagenerator.train_label[buffer['data_idx']]
             start_bin_idx           = sum(datagenerator.len_data[:-1])
             end_bin_idx             = sum(datagenerator.len_data)-1
-            buffer['target']        = datagenerator.trainingdata_target[:, start_bin_idx:end_bin_idx+1]
+            buffer['target']        = datagenerator.trainingdata_target[start_bin_idx:end_bin_idx+1, :]
             buffer['output']        = self.readout(self.train_state_vars[start_bin_idx:end_bin_idx+1, :])
             buffer['time_output']   = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width
             buffer['reservoir_state'] = self.train_state_vars[start_bin_idx:end_bin_idx+1, :]
@@ -160,7 +160,6 @@ class neuronalreservoir_classification(neuronalreservoir):
         if mode=="training":
             for data_idx in range(datagenerator.train_dataset_size):
                 predicted = self.classify(data_idx, "training", datagenerator)
-                print(f'true {int(datagenerator.train_label[data_idx])}')
                 confusion_matrix[int(predicted), int(datagenerator.train_label[data_idx])] += 1
         elif mode=="test":
             for data_idx in range(datagenerator.test_dataset_size):
@@ -171,7 +170,7 @@ class neuronalreservoir_classification(neuronalreservoir):
 
     def save_buffer_all(self):
         for buffer_idx, buffer in enumerate(self.data_buffer):
-            filename = "../data/buffer" + str(buffer_idx).zfill(2) + ".npz"
+            filename = "./data/buffer" + str(buffer_idx).zfill(2) + ".npz"
             np.savez(filename, **buffer)
 
 
@@ -230,7 +229,7 @@ import numpy as np # npが定義されていない場合のために追加
 def plot_timeseries(buffer, filename, detailed_reservoir_layer_plot=True):
     # --- 1. 図の構成パラメータ ---
     WIDTH_RATIOS = [1, 1, 1]
-    NUM_OUTPUT_NEURONS = buffer['output'].shape[0]
+    NUM_OUTPUT_NEURONS = buffer['output'].shape[1]
     
     # --- 2. FigureとAxesの作成 ---
     fig = plt.figure(figsize=(15, 8)) # Figureサイズを少し大きくして見やすくする
@@ -263,14 +262,14 @@ def plot_timeseries(buffer, filename, detailed_reservoir_layer_plot=True):
         ax_reservoir_list.append(ax_reservoir)
 
         ax_reservoir = fig.add_subplot(gs_reservoir[1, 0])
-        for i in range(buffer['reservoir_state'].shape[0]):
-            ax_reservoir.plot(buffer['time_output'], buffer['reservoir_state'][i, :], linewidth=1.2) # 線幅を調整
+        for i in range(buffer['reservoir_state'].shape[1]):
+            ax_reservoir.plot(buffer['time_output'], buffer['reservoir_state'][:, i], linewidth=1.2) # 線幅を調整
 
         ax_reservoir_list.append(ax_reservoir)
 
         ax_reservoir = fig.add_subplot(gs_reservoir[2, 0])
-        for i in range(buffer['variables'][1].shape[0]):
-            ax_reservoir.plot(buffer['t_rec'], buffer['variables'][1][i, :], linewidth=1.2) # 線幅を調整
+        for i in range(buffer['variables'][1].shape[1]):
+            ax_reservoir.plot(buffer['t_rec'], buffer['variables'][1][:, i], linewidth=1.2) # 線幅を調整
             ax_reservoir.set_xlabel('Time [ms]')
 
         ax_reservoir_list.append(ax_reservoir)
@@ -282,8 +281,8 @@ def plot_timeseries(buffer, filename, detailed_reservoir_layer_plot=True):
 
         # buffer['v_rec']が存在し、形状が適切であることを確認
         if buffer['variables'][0].shape[0] > 0:
-            for state_idx in range(buffer['variables'][0].shape[0]):
-                ax_reservoir.plot(buffer['t_rec'], buffer['variables'][0][state_idx, :], linewidth=0.8) # 線幅を調整
+            for state_idx in range(buffer['variables'][0].shape[1]):
+                ax_reservoir.plot(buffer['t_rec'], buffer['variables'][0][:, state_idx], linewidth=0.8) # 線幅を調整
         else:
             ax_reservoir.text(0.5, 0.5, 'No Reservoir Data', transform=ax_reservoir.transAxes, 
                               ha='center', va='center', fontsize=12, color='gray')
@@ -299,8 +298,8 @@ def plot_timeseries(buffer, filename, detailed_reservoir_layer_plot=True):
     ax_output_list = []
     for i in range(NUM_OUTPUT_NEURONS):
         ax_output = fig.add_subplot(gs_output[i, 0])
-        ax_output.plot(buffer['time_output'], buffer['output'][i, :], label="Output", linewidth=1.2) # 線幅を調整
-        ax_output.plot(buffer['time_output'], buffer['target'][i, :], label="Ground Truth", linestyle='--', linewidth=1.2) # ターゲットを点線に
+        ax_output.plot(buffer['time_output'], buffer['output'][:, i], label="Output", linewidth=1.2) # 線幅を調整
+        ax_output.plot(buffer['time_output'], buffer['target'][:, i], label="Ground Truth", linestyle='--', linewidth=1.2) # ターゲットを点線に
 
         # Y軸のラベルと目盛りを調整
         if i == NUM_OUTPUT_NEURONS - 1: # 一番下のサブプロットにX軸ラベル
