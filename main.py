@@ -190,7 +190,7 @@ def main(cfg: DictConfig):
                  confusion_matrix=confusion_matrix,
                  axis_labels=confusion_matrix_axis)
 
-        if is_multirun:
+        if not is_multirun:
             from NeuronalReservoir_classification import plot_timeseries
             # Visualize all buffered time-series data
             for buffer_idx in range(len(neuronalreservoir.batches_to_save_idx)):
