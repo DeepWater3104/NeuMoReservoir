@@ -16,4 +16,6 @@ seed: 1234                    # Random seed for reproducibility
 exc_syn_weight: 0.0005
 exc_syn_tau1: 1               # Added: Required for synapse initialization
 exc_syn_tau2: 5               # Added: Required for synapse initialization
-condition: "distal-dense"
+syn_loc_condition: "gaussian" # uniform or gaussian
+syn_loc_mean: 600
+syn_loc_std:  100

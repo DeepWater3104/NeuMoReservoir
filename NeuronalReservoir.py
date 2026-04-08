@@ -36,7 +36,7 @@ def check_synapse_stats(self):
     # 3. Obtain distance data
     exc_dists = [h.distance(seg) for seg in exc_segs]
 
-    logger.info(f"\n--- Detailed Placement Check ({self.condition}) ---")
+    logger.info(f"\n--- Detailed Placement Check ({self.syn_loc_condition}) ---")
     logger.info(f"Total Synapses: {len(exc_dists)}")
     logger.info(f"Occupied Segments: {occ_segs_count}")
     logger.info(f"Max Overlap in one segment: {max_overlap} synapses")
@@ -91,7 +91,9 @@ class neuronalreservoir():
 
         self.exc_syn_tau1         = params['exc_syn_tau1']
         self.exc_syn_tau2         = params['exc_syn_tau2']
-        self.condition            = params['condition']
+        self.syn_loc_condition    = params['syn_loc_condition']
+        self.syn_loc_mean         = params['syn_loc_mean']
+        self.syn_loc_std          = params['syn_loc_std']
 
         self.reg = params['reg']
         self.cell = cell
@@ -127,27 +129,13 @@ class neuronalreservoir():
         weights = np.zeros(areas.shape)
         distances = np.array(distances)
 
-        # 2. Weighting based on conditions
-        if self.condition == "distal-dense":  # Concentrated distally
-            mu = 600.0  # Far (adjusted to max cell length)
-            sigma = 100.0
+        ## 2. Weighting based on conditions
+        if self.syn_loc_condition == "gaussian":
+            mu    = self.syn_loc_mean
+            sigma = self.syn_loc_std
             weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
-            
-        elif self.condition == "proximal-dense":  # Concentrated proximally
-            mu = 0.0   # Near soma
-            sigma = 100.0
-            weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
-        elif self.condition == "proximal-sparse":  # Concentrated proximally (sparse)
-            mu = 000.0   # Near soma
-            sigma = 300.0
-            weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
-        elif self.condition == "distal-sparse":  # Concentrated distally (sparse)
-            mu = 600.0  # Far (adjusted to max cell length)
-            sigma = 300.0
-            weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
-            
-        elif self.condition == "random":  # Uniform distribution proportional to area
-            weights = areas
+        elif self.syn_loc_condition == "random":
+            weights = area
 
         # 3. Normalize weights (sum to 1)
         prob = weights / np.sum(weights)
@@ -166,7 +154,7 @@ class neuronalreservoir():
             syn.e = -10.0
             self.exc_syn_list.append(syn)
 
-        logger.info(f"Synapses created for condition: {self.condition}")
+        logger.info(f"Synapses created for condition: {self.syn_loc_condition}")
         check_synapse_stats(self)
 
     def _connect_synapses(self):
