@@ -7,7 +7,7 @@ hydra:
   job:
     chdir: True  # これをTrueにすると、プログラム実行中に自動でoutputs/...に移動します
   launcher: 
-    n_jobs: 24  # ここを修正：launcherの下に配置する
+    n_jobs: 20  # ここを修正：launcherの下に配置する
 
 # Shared parameters across different tasks and models
 num_states: 100

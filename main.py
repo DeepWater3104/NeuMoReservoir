@@ -115,8 +115,9 @@ def main(cfg: DictConfig):
             neuronalreservoir.train_state_vars = np.concatenate([neuronalreservoir.train_state_vars, state_vars], axis=0)
             
             # Save raw simulation data to buffer if index matches selected batches
-            if (data_idx, "training") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
-                neuronalreservoir.save_to_buffer("training", data_idx, spike_trains, datagenerator)
+            if not is_multirun:
+                if (data_idx, "training") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
+                    neuronalreservoir.save_to_buffer("training", data_idx, spike_trains, datagenerator)
  
             # Accumulate spike timings for analysis
             v_rec_array    = np.array(neuronalreservoir.Vm_at_soma)
@@ -151,8 +152,9 @@ def main(cfg: DictConfig):
             neuronalreservoir.test_state_vars  = np.concatenate([neuronalreservoir.test_state_vars, state_vars], axis=0)
             
             # Save test batch to buffer if index matches
-            if (data_idx, "test") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
-                neuronalreservoir.save_to_buffer("test", data_idx, spike_trains, datagenerator)
+            if not is_multirun:
+                if (data_idx, "test") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
+                    neuronalreservoir.save_to_buffer("test", data_idx, spike_trains, datagenerator)
  
             v_rec_array    = np.array(neuronalreservoir.Vm_at_soma)
             t_rec_array = np.array(neuronalreservoir.t_rec.to_python())
@@ -165,7 +167,8 @@ def main(cfg: DictConfig):
         logger.info("--- Start Saving Data and Images ---")
 
         # Update buffers after optimization is complete
-        neuronalreservoir.overwrite_buffer_after_optimized(datagenerator)
+        if not is_multirun:
+            neuronalreservoir.overwrite_buffer_after_optimized(datagenerator)
 
         # Evaluate and plot classification results for Training set
         confusion_matrix, confusion_matrix_axis = neuronalreservoir.get_classification_result("training", datagenerator)
