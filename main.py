@@ -19,6 +19,19 @@ def main(cfg: DictConfig):
     hydra_cfg = HydraConfig.get()
     is_multirun = hydra_cfg.mode.name == "MULTIRUN"
 
+    # Check if 'seed' is being swept in the command line overrides
+    overrides = hydra_cfg.overrides.task
+    is_seed_swept = any("seed=" in o and ("," in o or "range" in o) for o in overrides)
+
+    # Logic: Only save detailed buffers when the seed is NOT being swept.
+    # We prioritize statistical metrics over raw data during parameter sweeps.
+    should_save_buffer = not is_seed_swept
+    logger.info(f"Save buffer enabled: {should_save_buffer}")
+    if not should_save_buffer:
+        logger.info("Detailed buffer saving is DISABLED because 'seed' is being swept.")
+    else:
+        logger.info("Detailed buffer saving is ENABLED.")
+
     params = OmegaConf.to_container(cfg, resolve=True)
     
     # Ensure necessary directories exist for outputs
@@ -115,7 +128,7 @@ def main(cfg: DictConfig):
             neuronalreservoir.train_state_vars = np.concatenate([neuronalreservoir.train_state_vars, state_vars], axis=0)
             
             # Save raw simulation data to buffer if index matches selected batches
-            if not is_multirun:
+            if should_save_buffer:
                 if (data_idx, "training") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
                     neuronalreservoir.save_to_buffer("training", data_idx, spike_trains, datagenerator)
  
@@ -152,7 +165,7 @@ def main(cfg: DictConfig):
             neuronalreservoir.test_state_vars  = np.concatenate([neuronalreservoir.test_state_vars, state_vars], axis=0)
             
             # Save test batch to buffer if index matches
-            if not is_multirun:
+            if should_save_buffer:
                 if (data_idx, "test") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
                     neuronalreservoir.save_to_buffer("test", data_idx, spike_trains, datagenerator)
  
@@ -167,7 +180,7 @@ def main(cfg: DictConfig):
         logger.info("--- Start Saving Data and Images ---")
 
         # Update buffers after optimization is complete
-        if not is_multirun:
+        if should_save_buffer:
             neuronalreservoir.overwrite_buffer_after_optimized(datagenerator)
 
         # Evaluate and plot classification results for Training set
@@ -193,7 +206,7 @@ def main(cfg: DictConfig):
                  confusion_matrix=confusion_matrix,
                  axis_labels=confusion_matrix_axis)
 
-        if not is_multirun:
+        if should_save_buffer:
             from NeuronalReservoir_classification import plot_timeseries
             # Visualize all buffered time-series data
             for buffer_idx in range(len(neuronalreservoir.batches_to_save_idx)):
