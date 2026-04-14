@@ -19,14 +19,29 @@ def main(cfg: DictConfig):
     hydra_cfg = HydraConfig.get()
     is_multirun = hydra_cfg.mode.name == "MULTIRUN"
 
-    # Check if 'seed' is being swept in the command line overrides
-    overrides = hydra_cfg.overrides.task
-    is_seed_swept = any("seed=" in o and ("," in o or "range" in o) for o in overrides)
+    ## Check if 'seed' is being swept in the command line overrides
+    #overrides = hydra_cfg.overrides.task
+    #is_seed_swept = any("seed=" in o and ("," in o or "range" in o) for o in overrides)
 
-    # Logic: Only save detailed buffers when the seed is NOT being swept.
-    # We prioritize statistical metrics over raw data during parameter sweeps.
+    ## Logic: Only save detailed buffers when the seed is NOT being swept.
+    ## We prioritize statistical metrics over raw data during parameter sweeps.
+    #should_save_buffer = not is_seed_swept
+    #logger.info(f"Save buffer enabled: {should_save_buffer}")
+    #if not should_save_buffer:
+    #    logger.info("Detailed buffer saving is DISABLED because 'seed' is being swept.")
+    #else:
+    #    logger.info("Detailed buffer saving is ENABLED.")
+
+    #from hydra.core.hydra_config import HydraConfig
+
+    # Hydraのmultirunモード（-m）で実行されているかを確認
+    #is_multirun = HydraConfig.get().mode.name == "MULTIRUN"
+    
+    # さらに、具体的にseedがスイープ対象かチェックする場合
+    overrides = HydraConfig.get().overrides.task
+    is_seed_swept = any("seed=" in o for o in overrides)
+    
     should_save_buffer = not is_seed_swept
-    logger.info(f"Save buffer enabled: {should_save_buffer}")
     if not should_save_buffer:
         logger.info("Detailed buffer saving is DISABLED because 'seed' is being swept.")
     else:
