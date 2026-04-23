@@ -135,7 +135,7 @@ class neuronalreservoir():
             sigma = self.syn_loc_std
             weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
         elif self.syn_loc_condition == "random":
-            weights = area
+            weights = areas
 
         # 3. Normalize weights (sum to 1)
         prob = weights / np.sum(weights)
@@ -162,6 +162,7 @@ class neuronalreservoir():
         for syn in self.exc_syn_list:
             nc_tosyn = nrn.NetCon(None, syn)
             nc_tosyn.weight[0] = self.exc_syn_weight
+            print(f"DEBUG: Active weight = {nc_tosyn.weight[0]}")
             self.exc_nc_list.append(nc_tosyn)
 
     def resister_spike_events(self, spike_trains):
