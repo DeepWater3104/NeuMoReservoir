@@ -10,75 +10,84 @@ logger = logging.getLogger(__name__)
 
 nrn.load_file("stdrun.hoc")
 
-def get_dend_and_soma(cell):
-    all_dend_soma = []
+def get_soma_and_basal(cell):
+    soma_and_basal = []
     for sec in cell.somatic:
-        all_dend_soma.append(sec)
+        soma_and_basal.append(sec)
     for sec in cell.basal:
-        all_dend_soma.append(sec)
+        soma_and_basal.append(sec)
+    return soma_and_basal
+
+def get_soma_and_apical(cell):
+    soma_and_apical = []
+    for sec in cell.somatic:
+        soma_and_apical.append(sec)
     for sec in cell.apical:
-        all_dend_soma.append(sec)
-    return all_dend_soma
+        soma_and_apical.append(sec)
+    return soma_and_apical
+
+def get_soma_and_all_dend(cell):
+    soma_and_apical = []
+    for sec in cell.somatic:
+        soma_and_apical.append(sec)
+    for sec in cell.apical:
+        soma_and_apical.append(sec)
+    for sec in cell.basal:
+        soma_and_basal.append(sec)
+    return soma_and_apical
 
 def check_synapse_stats(self):
     from neuron import h
     import numpy as np
-    from collections import Counter
+    from collections import counter
 
-    # 1. Directly obtain segment objects for each synapse
+    # 1. directly obtain segment objects for each synapse
     exc_segs = [syn.get_segment() for syn in self.exc_syn_list]
     
-    # 2. Count overlaps per segment
-    seg_counts = Counter(exc_segs)
-    occ_segs_count = len(seg_counts) # Number of unique segments with synapses
+    # 2. count overlaps per segment
+    seg_counts = counter(exc_segs)
+    occ_segs_count = len(seg_counts) # number of unique segments with synapses
     max_overlap = max(seg_counts.values()) if seg_counts else 0
 
-    # 3. Obtain distance data
+    # 3. obtain distance data
     exc_dists = [h.distance(seg) for seg in exc_segs]
 
-    logger.info(f"\n--- Detailed Placement Check ({self.syn_loc_condition}) ---")
-    logger.info(f"Total Synapses: {len(exc_dists)}")
-    logger.info(f"Occupied Segments: {occ_segs_count}")
-    logger.info(f"Max Overlap in one segment: {max_overlap} synapses")
-    logger.info(f"Average Density: {len(exc_dists)/occ_segs_count:.2f} syns/segment (among occupied)")
+    logger.info(f"\n--- detailed placement check ({self.syn_loc_condition}) ---")
+    logger.info(f"total synapses: {len(exc_dists)}")
+    logger.info(f"occupied segments: {occ_segs_count}")
+    logger.info(f"max overlap in one segment: {max_overlap} synapses")
+    logger.info(f"average density: {len(exc_dists)/occ_segs_count:.2f} syns/segment (among occupied)")
 
-    # 4. "Number of Synapses" vs "Number of Segments" per distance
-    logger.info("\n[Distance: Synapses vs Occupied Segments]")
+    # 4. "number of synapses" vs "number of segments" per distance
+    logger.info("\n[distance: synapses vs occupied segments]")
     bins = np.arange(0, 1100, 100)
     for i in range(len(bins)-1):
         lower, upper = bins[i], bins[i+1]
         
-        # All synapses in this range
+        # all synapses in this range
         syns_in_range = [d for d in exc_dists if lower <= d < upper]
-        # Unique segments with synapses in this range
+        # unique segments with synapses in this range
         segs_in_range = {s for s in exc_segs if lower <= h.distance(s) < upper}
         
         if len(syns_in_range) > 0:
             bar = "#" * int(len(syns_in_range) / len(self.exc_syn_list) * 40)
             logger.info(f"{lower:4.0f}-{upper:4.0f} um: {bar}")
-            logger.info(f"    -> Synapses: {len(syns_in_range)}, Segments: {len(segs_in_range)}")
+            logger.info(f"    -> synapses: {len(syns_in_range)}, segments: {len(segs_in_range)}")
 
 def test_distance_accuracy(self, cell):
     from neuron import h
-    # 1. Reset origin (just in case)
+    # 1. reset origin (just in case)
     nrn.distance(0, 0.5, sec=cell.soma[0])
     
-    logger.info("--- NEURON Distance Validation ---")
+    logger.info("--- neuron distance validation ---")
     
-    # Test A: Distance of the soma itself (should be near 0)
+    # test a: distance of the soma itself (should be near 0)
     d_soma = h.distance(cell.soma[0](0.5))
-    logger.info(f"Distance at Soma(0.5): {d_soma:.4f} um (Expected: 0.0)")
+    logger.info(f"distance at soma(0.5): {d_soma:.4f} um (expected: 0.0)")
 
-    # Test B: Edge of the soma (should be L/2)
+    # test b: edge of the soma (should be l/2)
     d_soma_end = h.distance(cell.soma[0](1.0))
-    logger.info(f"Distance at Soma(1.0): {d_soma_end:.4f} um (Expected: ~{cell.soma[0].L/2:.1f})")
-
-    # Test C: Root of the first dendrite
-    # Starting point of the first section returned by get_dend_and_soma
-    first_dend = next(iter(get_dend_and_soma(cell)))
-    d_dend_start = h.distance(first_dend(0.0))
-    logger.info(f"Distance at First Dendrite start: {d_dend_start:.4f} um")
-
+    logger.info(f"distance at soma(1.0): {d_soma_end:.4f} um (expected: ~{cell.soma[0].l/2:.1f})")
 
 class neuronalreservoir():
     def __init__(self, cell, prng, params):
@@ -101,7 +110,7 @@ class neuronalreservoir():
         self.v_rec_list = []
 
         self.prng = prng
-        self.W = self.prng.random(self.num_states)# readout weight
+        self.w = self.prng.random(self.num_states)# readout weight
         
         self._build_network()
         self._create_records()
@@ -112,25 +121,38 @@ class neuronalreservoir():
 
     def _create_synapses(self):
         test_distance_accuracy(self, self.cell)
-        # Set the reference point for distance calculation (Soma)
+        # set the reference point for distance calculation (soma)
         nrn.distance(0, 0.5, sec=self.cell.soma[0]) 
         all_segs = []
         areas = []
         distances = []
 
-        # 1. Collect information for all segments
-        for sec in get_dend_and_soma(self.cell):
-            for seg in sec:
-                all_segs.append(seg)
-                areas.append(seg.area())
-                distances.append(nrn.distance(seg))
+        # 1. collect information for all segments
+        if self.syn_loc_condition == "random":
+            for sec in get_soma_and_apical(self.cell):
+                for seg in sec:
+                    all_segs.append(seg)
+                    areas.append(seg.area())
+                    distances.append(nrn.distance(seg))
+        elif self.syn_loc_condition == "gaussian-apical":
+            for sec in get_soma_and_apical(self.cell):
+                for seg in sec:
+                    all_segs.append(seg)
+                    areas.append(seg.area())
+                    distances.append(nrn.distance(seg))
+        elif self.syn_loc_condition == "gaussian-basal":
+            for sec in get_soma_and_basal(self.cell):
+                for seg in sec:
+                    all_segs.append(seg)
+                    areas.append(seg.area())
+                    distances.append(nrn.distance(seg))
 
         areas = np.array(areas)
         weights = np.zeros(areas.shape)
         distances = np.array(distances)
 
         ## 2. Weighting based on conditions
-        if self.syn_loc_condition == "gaussian":
+        if self.syn_loc_condition == "gaussian-apical" or self.syn_loc_condition == "gaussian-basal":
             mu    = self.syn_loc_mean
             sigma = self.syn_loc_std
             weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
@@ -152,6 +174,7 @@ class neuronalreservoir():
             syn.tau1 = self.exc_syn_tau1
             syn.tau2 = self.exc_syn_tau2
             syn.e = -10.0
+
             self.exc_syn_list.append(syn)
 
         logger.info(f"Synapses created for condition: {self.syn_loc_condition}")
@@ -162,7 +185,6 @@ class neuronalreservoir():
         for syn in self.exc_syn_list:
             nc_tosyn = nrn.NetCon(None, syn)
             nc_tosyn.weight[0] = self.exc_syn_weight
-            print(f"DEBUG: Active weight = {nc_tosyn.weight[0]}")
             self.exc_nc_list.append(nc_tosyn)
 
     def resister_spike_events(self, spike_trains):
