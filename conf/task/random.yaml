@@ -6,8 +6,8 @@ num_outputs: 10
 exc_num_syn: 78
 exc_syn_weight: 0.0005
 maximum_firing_rate: 10
-plot_all: true
 firing_rate: 10 # Hz
 jitter_std:  3  # ms
 bin_width:   5  # ms
 num_test_per_class: 5 # ms
+save_buffer: True

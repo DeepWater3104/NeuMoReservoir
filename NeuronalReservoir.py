@@ -39,13 +39,13 @@ def get_soma_and_all_dend(cell):
 def check_synapse_stats(self):
     from neuron import h
     import numpy as np
-    from collections import counter
+    from collections import Counter
 
     # 1. directly obtain segment objects for each synapse
     exc_segs = [syn.get_segment() for syn in self.exc_syn_list]
     
     # 2. count overlaps per segment
-    seg_counts = counter(exc_segs)
+    seg_counts = Counter(exc_segs)
     occ_segs_count = len(seg_counts) # number of unique segments with synapses
     max_overlap = max(seg_counts.values()) if seg_counts else 0
 
@@ -87,7 +87,7 @@ def test_distance_accuracy(self, cell):
 
     # test b: edge of the soma (should be l/2)
     d_soma_end = h.distance(cell.soma[0](1.0))
-    logger.info(f"distance at soma(1.0): {d_soma_end:.4f} um (expected: ~{cell.soma[0].l/2:.1f})")
+    logger.info(f"distance at soma(1.0): {d_soma_end:.4f} um (expected: ~{cell.soma[0].L/2:.1f})")
 
 class neuronalreservoir():
     def __init__(self, cell, prng, params):
@@ -128,7 +128,7 @@ class neuronalreservoir():
         distances = []
 
         # 1. collect information for all segments
-        if self.syn_loc_condition == "random":
+        if self.syn_loc_condition == "random" or self.syn_loc_condition == "gaussian":
             for sec in get_soma_and_apical(self.cell):
                 for seg in sec:
                     all_segs.append(seg)
@@ -152,7 +152,7 @@ class neuronalreservoir():
         distances = np.array(distances)
 
         ## 2. Weighting based on conditions
-        if self.syn_loc_condition == "gaussian-apical" or self.syn_loc_condition == "gaussian-basal":
+        if self.syn_loc_condition == "gaussian-apical" or self.syn_loc_condition == "gaussian-basal" or self.syn_loc_condition == "gaussian":
             mu    = self.syn_loc_mean
             sigma = self.syn_loc_std
             weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))

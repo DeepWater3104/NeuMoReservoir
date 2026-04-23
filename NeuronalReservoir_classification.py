@@ -16,7 +16,11 @@ class neuronalreservoir_classification(neuronalreservoir):
         self.prng = prng
         nrn.celsius = 36
 
-        self.plot_all              = params['plot_all']
+        self.save_buffer          = params['task']['save_buffer']
+        if self.save_buffer:
+            self.batches_to_save_idx   = params['batches_to_save_idx']
+            self.batches_to_save_mode  = params['batches_to_save_mode']
+
         self.exc_num_syn          = params['task']['exc_num_syn']
         self.exc_syn_weight       = params['task']['exc_syn_weight']
 
@@ -32,14 +36,13 @@ class neuronalreservoir_classification(neuronalreservoir):
         self.create_records_for_buffer()
 
         self.data_buffer = []
-        self.batches_to_save_idx   = params['batches_to_save_idx']
-        self.batches_to_save_mode  = params['batches_to_save_mode']
+
         
         logger.info("Initialized neuronalreservoir_classification.")
 
     def create_records_for_buffer(self):
-        if self.plot_all:
-            logger.debug("Creating records for buffer with plot_all enabled.")
+        if self.save_buffer:
+            logger.debug("Creating records for buffer with save_buffer enabled.")
             self.buffer_variable_list = []
             if self.record_target == 'potential':
                 total_length = 0

@@ -19,36 +19,9 @@ def main(cfg: DictConfig):
     hydra_cfg = HydraConfig.get()
     is_multirun = hydra_cfg.mode.name == "MULTIRUN"
 
-    ## Check if 'seed' is being swept in the command line overrides
-    #overrides = hydra_cfg.overrides.task
-    #is_seed_swept = any("seed=" in o and ("," in o or "range" in o) for o in overrides)
-
-    ## Logic: Only save detailed buffers when the seed is NOT being swept.
-    ## We prioritize statistical metrics over raw data during parameter sweeps.
-    #should_save_buffer = not is_seed_swept
-    #logger.info(f"Save buffer enabled: {should_save_buffer}")
-    #if not should_save_buffer:
-    #    logger.info("Detailed buffer saving is DISABLED because 'seed' is being swept.")
-    #else:
-    #    logger.info("Detailed buffer saving is ENABLED.")
-
-    #from hydra.core.hydra_config import HydraConfig
-
-    # Hydraのmultirunモード（-m）で実行されているかを確認
-    #is_multirun = HydraConfig.get().mode.name == "MULTIRUN"
-    
-    # さらに、具体的にseedがスイープ対象かチェックする場合
-    overrides = HydraConfig.get().overrides.task
-    is_seed_swept = any("seed=" in o for o in overrides)
-    
-    should_save_buffer = not is_seed_swept
-    if not should_save_buffer:
-        logger.info("Detailed buffer saving is DISABLED because 'seed' is being swept.")
-    else:
-        logger.info("Detailed buffer saving is ENABLED.")
 
     params = OmegaConf.to_container(cfg, resolve=True)
-    
+   
     # Ensure necessary directories exist for outputs
     os.makedirs("figure", exist_ok=True)
     os.makedirs("data", exist_ok=True)
@@ -95,24 +68,30 @@ def main(cfg: DictConfig):
         from DataGenerator import RandomPattern_datagenerator
         datagenerator = RandomPattern_datagenerator(params['task'], prng)
 
-        params['batches_to_save_idx']  = []
-        params['batches_to_save_mode'] = []
+        save_buffer = params['task']['save_buffer']
+        if not save_buffer:
+            logger.info("Detailed buffer saving is DISABLED.")
+        else:
+            logger.info("Detailed buffer saving is ENABLED.")
 
-        # Register training indices to be saved later
-        for data_idx in range(datagenerator.train_dataset_size):
-            params['batches_to_save_idx'].append(data_idx)
-            params['batches_to_save_mode'].append("training")
-        
-        # Select a subset of test indices (up to 60) for visualization/saving
-        test_indices = range(datagenerator.test_dataset_size)
-        num_test_samples = min(60, len(test_indices)) 
-        selected_test_indices = prng.choice(test_indices, size=num_test_samples, replace=False)
-        
-        for data_idx in selected_test_indices:
-            params['batches_to_save_idx'].append(data_idx)
-            params['batches_to_save_mode'].append("test")
+            params['batches_to_save_idx']  = []
+            params['batches_to_save_mode'] = []
 
-        params['bin_width'] = datagenerator.bin_width
+            # Register training indices to be saved later
+            for data_idx in range(datagenerator.train_dataset_size):
+                params['batches_to_save_idx'].append(data_idx)
+                params['batches_to_save_mode'].append("training")
+            
+            # Select a subset of test indices (up to 60) for visualization/saving
+            test_indices = range(datagenerator.test_dataset_size)
+            num_test_samples = min(60, len(test_indices)) 
+            selected_test_indices = prng.choice(test_indices, size=num_test_samples, replace=False)
+            
+            for data_idx in selected_test_indices:
+                params['batches_to_save_idx'].append(data_idx)
+                params['batches_to_save_mode'].append("test")
+
+            params['bin_width'] = datagenerator.bin_width
 
         from NeuronalReservoir_classification import neuronalreservoir_classification
         from Analysis import get_spike_timings
@@ -143,7 +122,7 @@ def main(cfg: DictConfig):
             neuronalreservoir.train_state_vars = np.concatenate([neuronalreservoir.train_state_vars, state_vars], axis=0)
             
             # Save raw simulation data to buffer if index matches selected batches
-            if should_save_buffer:
+            if save_buffer:
                 if (data_idx, "training") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
                     neuronalreservoir.save_to_buffer("training", data_idx, spike_trains, datagenerator)
  
@@ -180,7 +159,7 @@ def main(cfg: DictConfig):
             neuronalreservoir.test_state_vars  = np.concatenate([neuronalreservoir.test_state_vars, state_vars], axis=0)
             
             # Save test batch to buffer if index matches
-            if should_save_buffer:
+            if save_buffer:
                 if (data_idx, "test") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
                     neuronalreservoir.save_to_buffer("test", data_idx, spike_trains, datagenerator)
  
@@ -195,7 +174,7 @@ def main(cfg: DictConfig):
         logger.info("--- Start Saving Data and Images ---")
 
         # Update buffers after optimization is complete
-        if should_save_buffer:
+        if save_buffer:
             neuronalreservoir.overwrite_buffer_after_optimized(datagenerator)
 
         # Evaluate and plot classification results for Training set
@@ -221,7 +200,7 @@ def main(cfg: DictConfig):
                  confusion_matrix=confusion_matrix,
                  axis_labels=confusion_matrix_axis)
 
-        if should_save_buffer:
+        if save_buffer:
             from NeuronalReservoir_classification import plot_timeseries
             # Visualize all buffered time-series data
             for buffer_idx in range(len(neuronalreservoir.batches_to_save_idx)):
