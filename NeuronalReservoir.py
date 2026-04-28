@@ -27,14 +27,14 @@ def get_soma_and_apical(cell):
     return soma_and_apical
 
 def get_soma_and_all_dend(cell):
-    soma_and_apical = []
+    soma_and_all_dend = []
     for sec in cell.somatic:
-        soma_and_apical.append(sec)
+        soma_and_all_dend.append(sec)
     for sec in cell.apical:
-        soma_and_apical.append(sec)
+        soma_and_all_dend.append(sec)
     for sec in cell.basal:
-        soma_and_basal.append(sec)
-    return soma_and_apical
+        soma_and_all_dend.append(sec)
+    return soma_and_all_dend
 
 def check_synapse_stats(self):
     from neuron import h
@@ -74,6 +74,71 @@ def check_synapse_stats(self):
             logger.info(f"{lower:4.0f}-{upper:4.0f} um: {bar}")
             logger.info(f"    -> synapses: {len(syns_in_range)}, segments: {len(segs_in_range)}")
 
+
+def report_synapse_stats(self):
+    """
+    基底・尖端樹状突起別にシナプスの距離分布とセグメント占有率を出力する。
+    """
+    from collections import Counter
+    import numpy as np
+
+    # 1. セグメントの取得と部位判定
+    # 判定基準: セクション名に 'apic' が含まれれば apical、それ以外（dend, basal等）は basal
+    exc_segs = [syn.get_segment() for syn in self.exc_syn_list]
+    
+    # 部位別のデータ格納用
+    stats = {
+        "apical": {"dists": [], "segs": set()},
+        "basal":  {"dists": [], "segs": set()}
+    }
+
+    for seg in exc_segs:
+        sec_name = seg.sec.name().lower()
+        dist = nrn.distance(seg)
+        
+        target = "apical" if "apic" in sec_name else "basal"
+        stats[target]["dists"].append(dist)
+        stats[target]["segs"].add(seg)
+
+    # 2. ログ出力
+    logger.info(f"\n--- detailed placement check ({self.syn_loc_condition}) ---")
+    logger.info(f"total synapses: {len(exc_segs)}")
+
+    bins = np.arange(0, 1100, 100)
+    
+    for domain in ["basal", "apical"]:
+        dists = stats[domain]["dists"]
+        segs = stats[domain]["segs"]
+        
+        if not dists:
+            logger.info(f"\n[{domain.upper()}] No synapses placed.")
+            continue
+
+        # ドメインごとの統計
+        seg_counts = Counter([syn.get_segment() for syn in self.exc_syn_list 
+                              if (domain == "apical" and "apic" in syn.get_segment().sec.name().lower()) 
+                              or (domain == "basal" and "apic" not in syn.get_segment().sec.name().lower())])
+        
+        max_overlap = max(seg_counts.values()) if seg_counts else 0
+        
+        logger.info(f"\n[{domain.upper()} dendrites]")
+        logger.info(f"  synapses: {len(dists)}, unique segments: {len(segs)}")
+        logger.info(f"  max overlap: {max_overlap}, avg density: {len(dists)/len(segs):.2f} syns/seg")
+
+        # 距離ビンごとの分布表示
+        for i in range(len(bins)-1):
+            lower, upper = bins[i], bins[i+1]
+            syns_in_range = [d for d in dists if lower <= d < upper]
+            segs_in_range = {s for s in segs if lower <= nrn.distance(s) < upper}
+
+            if syns_in_range:
+                # 全シナプス数に対する割合でバーを表示
+                bar_len = int(len(syns_in_range) / len(self.exc_syn_list) * 40)
+                bar = "#" * bar_len
+                logger.info(f"  {lower:4.0f}-{upper:4.0f} um: {bar}")
+                logger.info(f"    -> syns: {len(syns_in_range)}, segments: {len(segs_in_range)}")
+
+
 def test_distance_accuracy(self, cell):
     from neuron import h
     # 1. reset origin (just in case)
@@ -110,7 +175,7 @@ class neuronalreservoir():
         self.v_rec_list = []
 
         self.prng = prng
-        self.w = self.prng.random(self.num_states)# readout weight
+        self.W = self.prng.random(self.num_states) # readout weight
         
         self._build_network()
         self._create_records()
@@ -129,7 +194,7 @@ class neuronalreservoir():
 
         # 1. collect information for all segments
         if self.syn_loc_condition == "random" or self.syn_loc_condition == "gaussian":
-            for sec in get_soma_and_apical(self.cell):
+            for sec in get_soma_and_all_dend(self.cell):
                 for seg in sec:
                     all_segs.append(seg)
                     areas.append(seg.area())
@@ -178,7 +243,8 @@ class neuronalreservoir():
             self.exc_syn_list.append(syn)
 
         logger.info(f"Synapses created for condition: {self.syn_loc_condition}")
-        check_synapse_stats(self)
+        #check_synapse_stats(self)
+        report_synapse_stats(self)
 
     def _connect_synapses(self):
         self.exc_nc_list = []

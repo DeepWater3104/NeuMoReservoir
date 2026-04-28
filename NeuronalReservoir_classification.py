@@ -42,7 +42,6 @@ class neuronalreservoir_classification(neuronalreservoir):
 
     def create_records_for_buffer(self):
         if self.save_buffer:
-            logger.debug("Creating records for buffer with save_buffer enabled.")
             self.buffer_variable_list = []
             if self.record_target == 'potential':
                 total_length = 0

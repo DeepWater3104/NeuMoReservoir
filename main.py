@@ -91,7 +91,7 @@ def main(cfg: DictConfig):
                 params['batches_to_save_idx'].append(data_idx)
                 params['batches_to_save_mode'].append("test")
 
-            params['bin_width'] = datagenerator.bin_width
+        params['bin_width'] = datagenerator.bin_width
 
         from NeuronalReservoir_classification import neuronalreservoir_classification
         from Analysis import get_spike_timings
