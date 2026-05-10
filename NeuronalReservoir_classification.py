@@ -107,6 +107,9 @@ class neuronalreservoir_classification(neuronalreservoir):
             buffer['output']        = self.readout(self.train_state_vars[start_bin_idx:end_bin_idx+1, :])
             buffer['time_output']   = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width
             buffer['reservoir_state'] = self.train_state_vars[start_bin_idx:end_bin_idx+1, :]
+            #buffer['output']         = self.readout(buffer['reservoir_state'])
+            #buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "training", datagenerator)
+
         elif mode=="test":
             buffer['TrueLabel']     = datagenerator.test_label[buffer['data_idx']]
             # Calculate indices for slicing state variables in test mode
@@ -116,6 +119,9 @@ class neuronalreservoir_classification(neuronalreservoir):
             buffer['output']        = self.readout(self.test_state_vars[start_bin_idx:end_bin_idx+1, :])
             buffer['time_output']   = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width + sum(datagenerator.len_data[:datagenerator.train_dataset_size]) * self.bin_width
             buffer['reservoir_state'] = self.test_state_vars[start_bin_idx:end_bin_idx+1, :]
+            buffer['output']         = self.readout(buffer['reservoir_state'])
+            buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "test", datagenerator)
+
 
         self.data_buffer.append(buffer)
 
@@ -169,11 +175,24 @@ class neuronalreservoir_classification(neuronalreservoir):
 
         return confusion_matrix, confusion_matrix_axis
 
+    def save_buffer_single(self, buffer_idx):
+        buffer = self.data_buffer[buffer_idx]
+        filename = "./data/buffer" + str(buffer_idx).zfill(2) + ".npz"
+        logger.info(f"Saving buffer to {filename}")
+        np.savez(filename, **buffer)
+        filename = "./figure/buffer" + str(buffer_idx).zfill(2) + ".png"
+        plot_timeseries(self.data_buffer[buffer_idx], filename)
+        self.data_buffer[buffer_idx] = {}
+
     def save_buffer_all(self):
         for buffer_idx, buffer in enumerate(self.data_buffer):
+            # Visualize all buffered time-series data
+            filename = "./figure/buffer" + str(buffer_idx).zfill(2) + ".png"
+            plot_timeseries(self.data_buffer[buffer_idx], filename)
             filename = "./data/buffer" + str(buffer_idx).zfill(2) + ".npz"
             logger.info(f"Saving buffer to {filename}")
             np.savez(filename, **buffer)
+            self.data_buffer[buffer_idx] = {}
 
 
 def plot_confusion_matrix(confusion_matrix, labels, title='Confusion Matrix', filename='confmat.png'):

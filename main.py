@@ -137,6 +137,8 @@ def main(cfg: DictConfig):
 
         # Train the readout weights based on simulated reservoir states
         neuronalreservoir.optimize(neuronalreservoir.train_state_vars, datagenerator.trainingdata_target)
+        neuronalreservoir.overwrite_buffer_after_optimized(datagenerator)
+        neuronalreservoir.save_buffer_all()
 
         logger.info("--- Start Test Data Simulation ---")
         
@@ -162,6 +164,7 @@ def main(cfg: DictConfig):
             if save_buffer:
                 if (data_idx, "test") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
                     neuronalreservoir.save_to_buffer("test", data_idx, spike_trains, datagenerator)
+                    neuronalreservoir.save_buffer_single(len(neuronalreservoir.data_buffer) - 1)
  
             v_rec_array    = np.array(neuronalreservoir.Vm_at_soma)
             t_rec_array = np.array(neuronalreservoir.t_rec.to_python())
@@ -172,10 +175,6 @@ def main(cfg: DictConfig):
         logger.info("--- End Test Data Simulation ---")
 
         logger.info("--- Start Saving Data and Images ---")
-
-        # Update buffers after optimization is complete
-        if save_buffer:
-            neuronalreservoir.overwrite_buffer_after_optimized(datagenerator)
 
         # Evaluate and plot classification results for Training set
         confusion_matrix, confusion_matrix_axis = neuronalreservoir.get_classification_result("training", datagenerator)
@@ -199,15 +198,6 @@ def main(cfg: DictConfig):
         np.savez("./data/classification_results.npz",
                  confusion_matrix=confusion_matrix,
                  axis_labels=confusion_matrix_axis)
-
-        if save_buffer:
-            from NeuronalReservoir_classification import plot_timeseries
-            # Visualize all buffered time-series data
-            for buffer_idx in range(len(neuronalreservoir.batches_to_save_idx)):
-                filename = "./figure/buffer" + str(buffer_idx).zfill(2) + ".png"
-                plot_timeseries(neuronalreservoir.data_buffer[buffer_idx], filename)
-
-            neuronalreservoir.save_buffer_all()
 
     elif params['task']['name'] == "sinwave":
         from DataGenerator import sin_datagenerator
