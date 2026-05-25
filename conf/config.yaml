@@ -20,3 +20,5 @@ exc_syn_tau2: 5               # Added: Required for synapse initialization
 syn_loc_condition: "gaussian" # uniform or gaussian or gaussian-apical or gaussian-basal
 syn_loc_mean: 600
 syn_loc_std:  100
+
+cell_name: "cell1/"

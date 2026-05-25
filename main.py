@@ -41,9 +41,9 @@ def main(cfg: DictConfig):
     # 1. Compile MOD files (Check environment context for multirun/single run)
     from neuron_simulation import run_nrnivmodl
     if is_multirun:
-        cell_dir = "../../../../cells/cell1/"
+        cell_dir = "../../../../cells/" + str(params['cell_name'])
     else:
-        cell_dir = "../../../cells/cell1/"
+        cell_dir = "../../../cells/" + str(params['cell_name'])
     run_nrnivmodl(cell_dir)
     
     # 2. Load Cell Model and NEURON environment
