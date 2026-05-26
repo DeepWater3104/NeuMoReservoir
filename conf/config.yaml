@@ -13,7 +13,7 @@ hydra:
 num_states: 100
 reg: 1e-7
 record_target: "calcium_acum" # Target variable for recording (e.g., potential, calcium_acum)
-bin_width: 0.5                # Time resolution for binning (ms)
+time_integration: True
 seed: 1234                    # Random seed for reproducibility
 exc_syn_tau1: 1               # Added: Required for synapse initialization
 exc_syn_tau2: 5               # Added: Required for synapse initialization

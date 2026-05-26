@@ -159,7 +159,6 @@ class neuronalreservoir():
         self.cell = cell
         nrn.celsius = 36
 
-        self.bin_width     = params['bin_width']
         self.num_states    = params['num_states']
         self.record_target = params['record_target']
 
@@ -320,32 +319,38 @@ class neuronalreservoir():
     def generate_dynamics(self, total_duration):
         nrn.continuerun( total_duration * ms)
 
-    def get_binned_states(self, interval_start, num_bins):
-        t_rec = np.array(self.t_rec.to_python())
-        v_rec = np.column_stack([np.array(v.to_python()) for v in self.v_rec_list])
-        t_start = interval_start
-        t_end   = t_rec[-1]
+    def get_binned_states(self, interval_start, num_bins, time_integration):
+        if time_integration:
+            t_rec = np.array(self.t_rec.to_python())
+            v_rec = np.column_stack([np.array(v.to_python()) for v in self.v_rec_list])
+            t_start = interval_start
+            t_end   = t_rec[-1]
 
-        # 1. Calculate time steps (dt) first
-        # Use time until "next point" as the weight for each point
-        dt = np.diff(t_rec, append=t_rec[-1] + (t_rec[-1] - t_rec[-2]))
-        
-        # 2. Calculate bin indices (accounting for rounding errors)
-        # Calculate relative time from t_start
-        t_relative = t_rec - t_start
-        bin_indices = (t_relative / self.bin_width).astype(int)
-        #num_bins = int((t_end - t_start) / self.bin_width)
-        bin_indices = np.clip(bin_indices, 0, num_bins - 1)
-        
-        # 3. Calculate weighted state variables
-        weighted_v = v_rec * dt[:, np.newaxis]
-        
-        # 4. Aggregation (avoiding loops)
-        res = np.zeros((num_bins, self.num_states))
-        # numpy.add.at performs res[bin_indices, :] += weighted_v efficiently
-        np.add.at(res, bin_indices, weighted_v)
-        
-        return res / self.bin_width
+            # 1. Calculate time steps (dt) first
+            # Use time until "next point" as the weight for each point
+            dt = np.diff(t_rec, append=t_rec[-1] + (t_rec[-1] - t_rec[-2]))
+            
+            # 2. Calculate bin indices (accounting for rounding errors)
+            # Calculate relative time from t_start
+            t_relative = t_rec - t_start
+            bin_indices = (t_relative / self.bin_width).astype(int)
+            #num_bins = int((t_end - t_start) / self.bin_width)
+            bin_indices = np.clip(bin_indices, 0, num_bins - 1)
+            
+            # 3. Calculate weighted state variables
+            weighted_v = v_rec * dt[:, np.newaxis]
+            
+            # 4. Aggregation (avoiding loops)
+            res = np.zeros((num_bins, self.num_states))
+            # numpy.add.at performs res[bin_indices, :] += weighted_v efficiently
+            np.add.at(res, bin_indices, weighted_v)
+            
+            return res / self.bin_width
+
+        elif not time_integration:
+            t_rec = np.array(self.t_rec.to_python())
+            v_rec = np.column_stack([np.array(v.to_python()) for v in self.v_rec_list])
+            return v_rec
 
     def readout(self, state_vars):
         return state_vars @ self.W

@@ -66,6 +66,9 @@ def main(cfg: DictConfig):
     # Branching logic based on the specific task type
     if params['task']['name'] == "random":
         from DataGenerator import RandomPattern_datagenerator
+        if not params['time_integration']:
+            params['task']['bin_width'] = nrn.dt
+
         datagenerator = RandomPattern_datagenerator(params['task'], prng)
 
         save_buffer = params['task']['save_buffer']
@@ -91,7 +94,6 @@ def main(cfg: DictConfig):
                 params['batches_to_save_idx'].append(data_idx)
                 params['batches_to_save_mode'].append("test")
 
-        params['bin_width'] = datagenerator.bin_width
 
         from NeuronalReservoir_classification import neuronalreservoir_classification
         from Analysis import get_spike_timings
@@ -102,24 +104,28 @@ def main(cfg: DictConfig):
 
         from tqdm import tqdm
         # Start training data simulation loop
+        current_time = 0.0
         for data_idx in tqdm(range(datagenerator.train_dataset_size), desc="Training Data Simulation", disable=is_multirun): 
-            spike_trains = datagenerator.get_spike_trains(data_idx, "train")
+            spike_trains = datagenerator.get_spike_trains(data_idx, "train", params['time_integration'])
             
             # Calculate binning indices for the current simulation interval
             start_bin_idx = sum(datagenerator.len_data[:-1])
             end_bin_idx   = sum(datagenerator.len_data)-1
             num_bins = end_bin_idx - start_bin_idx + 1
             
-            interval_start = (params['bin_width'] * start_bin_idx)
-            interval_end   = (params['bin_width'] * (end_bin_idx+1))
+            interval_start = (params['task']['bin_width'] * start_bin_idx)
+            interval_end   = (params['task']['bin_width'] * (end_bin_idx+1))
 
             # Execute NEURON simulation and extract binned states
             neuronalreservoir.resister_spike_events(spike_trains)
-            neuronalreservoir.generate_dynamics(interval_end)
-            state_vars = neuronalreservoir.get_binned_states(interval_start, num_bins)
+            current_time += datagenerator.pattern_duration_ms
+            neuronalreservoir.generate_dynamics(current_time)
+            state_vars = neuronalreservoir.get_binned_states(interval_start, num_bins, params['time_integration'])
             
             # Store binned states for later optimization (readout training)
+            shape_before_concatenate = np.shape(neuronalreservoir.train_state_vars)
             neuronalreservoir.train_state_vars = np.concatenate([neuronalreservoir.train_state_vars, state_vars], axis=0)
+            print(f'debug state vars array size: {np.shape(state_vars)} + {shape_before_concatenate} = {np.shape(neuronalreservoir.train_state_vars)}')
             
             # Save raw simulation data to buffer if index matches selected batches
             if save_buffer:
@@ -144,19 +150,20 @@ def main(cfg: DictConfig):
         
         # Start test data simulation loop
         for data_idx in tqdm(range(datagenerator.test_dataset_size), desc="Testing Data Simulation", disable=is_multirun): 
-            spike_trains = datagenerator.get_spike_trains(data_idx, "test")
+            spike_trains = datagenerator.get_spike_trains(data_idx, "test", params['time_integration'])
             
             start_bin_idx = sum(datagenerator.len_data[:-1])
             end_bin_idx   = sum(datagenerator.len_data)-1
             num_bins = end_bin_idx - start_bin_idx + 1
             
-            interval_start = (neuronalreservoir.bin_width * start_bin_idx)
-            interval_end   = (neuronalreservoir.bin_width * (end_bin_idx+1))
+            interval_start = (params['task']['bin_width'] * start_bin_idx)
+            interval_end   = (params['task']['bin_width'] * (end_bin_idx+1))
 
             # Execute simulation for test data
             neuronalreservoir.resister_spike_events(spike_trains)
-            neuronalreservoir.generate_dynamics(interval_end)
-            state_vars = neuronalreservoir.get_binned_states(interval_start, num_bins)
+            current_time += datagenerator.pattern_duration_ms
+            neuronalreservoir.generate_dynamics(current_time)
+            state_vars = neuronalreservoir.get_binned_states(interval_start, num_bins, params['time_integration'])
             
             neuronalreservoir.test_state_vars  = np.concatenate([neuronalreservoir.test_state_vars, state_vars], axis=0)
             

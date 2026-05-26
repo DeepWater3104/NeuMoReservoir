@@ -23,6 +23,7 @@ class neuronalreservoir_classification(neuronalreservoir):
 
         self.exc_num_syn          = params['task']['exc_num_syn']
         self.exc_syn_weight       = params['task']['exc_syn_weight']
+        self.bin_width     = params['task']['bin_width']
 
         # used to calculate firing rate
         self.Vm_at_soma = nrn.Vector().record(self.cell.soma[0](0.5)._ref_v)

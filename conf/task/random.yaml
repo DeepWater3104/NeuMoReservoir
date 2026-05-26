@@ -3,9 +3,11 @@ name: "random"
 datagenerator_type: "RandomPattern_datagenerator"
 n_repetition: 5
 num_outputs: 10
+poisson_dt: 1.0
 exc_num_syn: 78
 exc_syn_weight: 0.0005
 maximum_firing_rate: 10
+pattern_duration_ms: 1000.0 
 firing_rate: 10 # Hz
 jitter_std:  3  # ms
 bin_width:   5  # ms

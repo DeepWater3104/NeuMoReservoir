@@ -338,8 +338,8 @@ class RandomPattern_datagenerator(datagenerator):
         self.num_channels = params['exc_num_syn'] # 入力次元数（シナプス数と一致させる）
         self.jitter_std   = params['jitter_std'] # 
         
-        self.pattern_duration_ms = params.get('pattern_duration_ms', 1000) # 1パターンの長さ(ms)
-        self.poisson_dt= params.get('poisson_dt', 1)
+        self.pattern_duration_ms = params.get('pattern_duration_ms', 1000.0) # 1パターンの長さ(ms)
+        self.poisson_dt= params.get('poisson_dt', 1.0)
         self.bin_width = params['bin_width']
 
         # データセットのサイズ定義
@@ -463,14 +463,21 @@ class RandomPattern_datagenerator(datagenerator):
         connect_synapses_toydata(self)
         #pass
 
-    def generate_data(self, data_idx, mode):
+    def generate_data(self, data_idx, mode, time_integration):
         if mode=="train":
-            self.len_data.append(int(self.pattern_duration_ms / self.bin_width))
+            if not time_integration:
+                self.len_data.append(int(self.pattern_duration_ms / self.bin_width) + 1)
+            else:
+                self.len_data.append(int(self.pattern_duration_ms / self.bin_width))
             label_idx = data_idx
             self.trainingdata_target = np.concatenate([self.trainingdata_target, self.generate_target_within_batch(data_idx,  label_idx)], axis=0)
+            print(f'debug target array size: {np.shape(self.trainingdata_target)}')
             return self.class_templates[label_idx]
         elif mode=="test":
-            self.len_data.append(int(self.pattern_duration_ms / self.bin_width))
+            if not time_integration:
+                self.len_data.append(int(self.pattern_duration_ms / self.bin_width) + 1)
+            else:
+                self.len_data.append(int(self.pattern_duration_ms / self.bin_width))
             label_idx = self.test_label[data_idx]
             self.testdata_target = np.concatenate([self.testdata_target, self.generate_target_within_batch(self.train_dataset_size+data_idx,  label_idx)], axis=0)
 
@@ -488,11 +495,11 @@ class RandomPattern_datagenerator(datagenerator):
             # ソート
             return spiketrain[spiketrain[:, 0].argsort()]
         
-    def get_spike_trains(self, data_idx, mode):
+    def get_spike_trains(self, data_idx, mode, time_integration):
         """
         NEURONのNetConにイベントを登録するメイン関数
         """
-        spike_trains = self.generate_data(data_idx, mode)
+        spike_trains = self.generate_data(data_idx, mode, time_integration)
 
         # 全体のシミュレーション時間（オフセット）を計算
         # len_dataにはこれまでのデータの長さ（ステップ数ではなく配列サイズ=時間数と仮定されている場合もあるが、
@@ -508,6 +515,7 @@ class RandomPattern_datagenerator(datagenerator):
 
         #spike_train_biased = spike_trains
         spike_train_biased = spike_trains.copy()
+        #spike_train_biased = spike_trains.astype(np.float64)
         spike_train_biased[:, 0] += offset_time
 
         return spike_train_biased
