@@ -22,3 +22,9 @@ syn_loc_mean: 600
 syn_loc_std:  100
 
 cell_name: "cell1/"
+
+gcalbar_ratio: null
+gcanbar_ratio: null
+gcatbar_ratio: null
+gcakbar_ratio: null
+gslowcakbar_ratio: null

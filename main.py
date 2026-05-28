@@ -63,6 +63,15 @@ def main(cfg: DictConfig):
     else:
         cell = getattr(nrn, template_name)(cell_dir + "morphology", morph_path.name)
 
+
+    if (params['gcalbar_ratio'] is not None or
+        params['gcanbar_ratio'] is not None or
+        params['gcatbar_ratio'] is not None or
+        params['gcakbar_ratio'] is not None or
+        params['gslowcakbar_ratio'] is not None):
+        from cell_modifier import Ca_Related_Channels_modifier
+        Ca_Related_Channels_modifier(cell, params)
+
     # Branching logic based on the specific task type
     if params['task']['name'] == "random":
         from DataGenerator import RandomPattern_datagenerator
@@ -125,7 +134,6 @@ def main(cfg: DictConfig):
             # Store binned states for later optimization (readout training)
             shape_before_concatenate = np.shape(neuronalreservoir.train_state_vars)
             neuronalreservoir.train_state_vars = np.concatenate([neuronalreservoir.train_state_vars, state_vars], axis=0)
-            print(f'debug state vars array size: {np.shape(state_vars)} + {shape_before_concatenate} = {np.shape(neuronalreservoir.train_state_vars)}')
             
             # Save raw simulation data to buffer if index matches selected batches
             if save_buffer:

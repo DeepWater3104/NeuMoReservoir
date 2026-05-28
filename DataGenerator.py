@@ -471,7 +471,6 @@ class RandomPattern_datagenerator(datagenerator):
                 self.len_data.append(int(self.pattern_duration_ms / self.bin_width))
             label_idx = data_idx
             self.trainingdata_target = np.concatenate([self.trainingdata_target, self.generate_target_within_batch(data_idx,  label_idx)], axis=0)
-            print(f'debug target array size: {np.shape(self.trainingdata_target)}')
             return self.class_templates[label_idx]
         elif mode=="test":
             if not time_integration:
