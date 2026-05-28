@@ -143,7 +143,7 @@ def main(cfg: DictConfig):
             # Accumulate spike timings for analysis
             v_rec_array    = np.array(neuronalreservoir.Vm_at_soma)
             t_rec_array = np.array(neuronalreservoir.t_rec.to_python())
-            neuronalreservoir.spike_timings = neuronalreservoir.spike_timings + get_spike_timings(t_rec_array, v_rec_array, threshold=-20)
+            neuronalreservoir.spike_timings = neuronalreservoir.spike_timings + get_spike_timings(t_rec_array, v_rec_array, threshold=-30)
 
             nrn.frecord_init()                   
         
@@ -183,7 +183,7 @@ def main(cfg: DictConfig):
  
             v_rec_array    = np.array(neuronalreservoir.Vm_at_soma)
             t_rec_array = np.array(neuronalreservoir.t_rec.to_python())
-            neuronalreservoir.spike_timings = neuronalreservoir.spike_timings + get_spike_timings(t_rec_array, v_rec_array, threshold=-20)
+            neuronalreservoir.spike_timings = neuronalreservoir.spike_timings + get_spike_timings(t_rec_array, v_rec_array, threshold=-30)
 
             nrn.frecord_init()
 
@@ -213,6 +213,12 @@ def main(cfg: DictConfig):
         np.savez("./data/classification_results.npz",
                  confusion_matrix=confusion_matrix,
                  axis_labels=confusion_matrix_axis)
+        
+        from Analysis import get_firing_rate
+        total_duration_sec = params['task']['pattern_duration_ms'] * (params['task']['num_output'] * (params['task']['n_repetition'] + 1)) * 0.001
+        firing_rate = get_firing_rate(neuronalreservoir.spike_timings, total_duration_sec)
+        with open('./data/firing_rate.txt', 'w') as f:
+            f.write(f"{firing_rate}\n")
 
     elif params['task']['name'] == "sinwave":
         from DataGenerator import sin_datagenerator
