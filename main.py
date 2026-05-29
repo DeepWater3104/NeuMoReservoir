@@ -215,7 +215,7 @@ def main(cfg: DictConfig):
                  axis_labels=confusion_matrix_axis)
         
         from Analysis import get_firing_rate
-        total_duration_sec = params['task']['pattern_duration_ms'] * (params['task']['num_output'] * (params['task']['n_repetition'] + 1)) * 0.001
+        total_duration_sec = params['task']['pattern_duration_ms'] * (params['task']['num_outputs'] * (params['task']['n_repetition'] + 1)) * 0.001
         firing_rate = get_firing_rate(neuronalreservoir.spike_timings, total_duration_sec)
         with open('./data/firing_rate.txt', 'w') as f:
             f.write(f"{firing_rate}\n")
