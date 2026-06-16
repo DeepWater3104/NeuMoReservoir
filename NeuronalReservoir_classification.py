@@ -180,7 +180,7 @@ class neuronalreservoir_classification(neuronalreservoir):
         buffer = self.data_buffer[buffer_idx]
         filename = "./data/buffer" + str(buffer_idx).zfill(2) + ".npz"
         logger.info(f"Saving buffer to {filename}")
-        np.savez(filename, **buffer)
+        np.savez_compressed(filename, **buffer)
         filename = "./figure/buffer" + str(buffer_idx).zfill(2) + ".png"
         plot_timeseries(self.data_buffer[buffer_idx], filename)
         self.data_buffer[buffer_idx] = {}
@@ -192,7 +192,7 @@ class neuronalreservoir_classification(neuronalreservoir):
             plot_timeseries(self.data_buffer[buffer_idx], filename)
             filename = "./data/buffer" + str(buffer_idx).zfill(2) + ".npz"
             logger.info(f"Saving buffer to {filename}")
-            np.savez(filename, **buffer)
+            np.savez_compressed(filename, **buffer)
             self.data_buffer[buffer_idx] = {}
 
 
