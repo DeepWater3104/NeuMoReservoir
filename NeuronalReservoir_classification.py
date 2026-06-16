@@ -82,7 +82,7 @@ class neuronalreservoir_classification(neuronalreservoir):
                             v = nrn.Vector().record(sec(rec_prop)._ref_v)
                             self.buffer_variable_list.append(v)
             
-    def save_to_buffer(self, mode, data_idx, spike_train, datagenerator):
+    def save_to_buffer(self, mode, data_idx, spike_train, datagenerator, save_buffer_IOincluded):
         logger.debug(f"Saving data to buffer. Mode: {mode}, Index: {data_idx}")
         buffer = {}
         buffer['mode']         = mode
@@ -102,42 +102,41 @@ class neuronalreservoir_classification(neuronalreservoir):
         if mode=="training":
             buffer['TrueLabel']     = datagenerator.train_label[buffer['data_idx']]
             # Calculate indices for slicing state variables corresponding to this batch
-            start_bin_idx           = sum(datagenerator.len_data[:-1])
-            end_bin_idx             = sum(datagenerator.len_data)-1
-            buffer['target']        = datagenerator.trainingdata_target[start_bin_idx:end_bin_idx+1, :]
-            buffer['output']        = self.readout(self.train_state_vars[start_bin_idx:end_bin_idx+1, :])
-            buffer['time_output']   = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width
-            buffer['reservoir_state'] = self.train_state_vars[start_bin_idx:end_bin_idx+1, :]
-            #buffer['output']         = self.readout(buffer['reservoir_state'])
-            #buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "training", datagenerator)
+            if save_buffer_IOincluded:
+                start_bin_idx           = sum(datagenerator.len_data[:-1])
+                end_bin_idx             = sum(datagenerator.len_data)-1
+                buffer['target']        = datagenerator.trainingdata_target[start_bin_idx:end_bin_idx+1, :]
+                buffer['output']        = self.readout(self.train_state_vars[start_bin_idx:end_bin_idx+1, :])
+                buffer['time_output']   = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width
 
         elif mode=="test":
             buffer['TrueLabel']     = datagenerator.test_label[buffer['data_idx']]
             # Calculate indices for slicing state variables in test mode
-            start_bin_idx           = sum(datagenerator.len_data[datagenerator.train_dataset_size:-1])
-            end_bin_idx             = sum(datagenerator.len_data[datagenerator.train_dataset_size:])-1
-            buffer['target']        = datagenerator.testdata_target[start_bin_idx:end_bin_idx+1, :]
-            buffer['output']        = self.readout(self.test_state_vars[start_bin_idx:end_bin_idx+1, :])
-            buffer['time_output']   = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width + sum(datagenerator.len_data[:datagenerator.train_dataset_size]) * self.bin_width
-            buffer['reservoir_state'] = self.test_state_vars[start_bin_idx:end_bin_idx+1, :]
-            buffer['output']         = self.readout(buffer['reservoir_state'])
+            if save_buffer_IOincluded:
+                start_bin_idx           = sum(datagenerator.len_data[datagenerator.train_dataset_size:-1])
+                end_bin_idx             = sum(datagenerator.len_data[datagenerator.train_dataset_size:])-1
+                buffer['target']        = datagenerator.testdata_target[start_bin_idx:end_bin_idx+1, :]
+                buffer['output']        = self.readout(self.test_state_vars[start_bin_idx:end_bin_idx+1, :])
+                buffer['time_output']   = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width + sum(datagenerator.len_data[:datagenerator.train_dataset_size]) * self.bin_width
             buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "test", datagenerator)
 
 
         self.data_buffer.append(buffer)
 
-    def overwrite_buffer_after_optimized(self, datagenerator):
+    def overwrite_buffer_after_optimized(self, datagenerator, save_buffer_IOincluded):
         logger.info("Overwriting buffer with optimized readout results.")
         for buffer in self.data_buffer:
             if buffer['mode']=="training":
-                start_bin_idx            = sum(datagenerator.len_data[:buffer['data_idx']])
-                end_bin_idx              = sum(datagenerator.len_data[:buffer['data_idx']+1])-1
-                buffer['output']         = self.readout(buffer['reservoir_state'])
+                if save_buffer_IOincluded:
+                    start_bin_idx            = sum(datagenerator.len_data[:buffer['data_idx']])
+                    end_bin_idx              = sum(datagenerator.len_data[:buffer['data_idx']+1])-1
+                    buffer['output']         = self.readout(self.train_state_vars[start_bin_idx:end_bin_idx+1, :])
                 buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "training", datagenerator)
             elif buffer['mode']=="test":
-                start_bin_idx            = sum(datagenerator.len_data[datagenerator.train_dataset_size:datagenerator.train_dataset_size+buffer['data_idx']])
-                end_bin_idx              = sum(datagenerator.len_data[datagenerator.train_dataset_size:datagenerator.train_dataset_size+buffer['data_idx']+1])-1
-                buffer['output']         = self.readout(buffer['reservoir_state'])
+                if save_buffer_IOincluded:
+                    start_bin_idx            = sum(datagenerator.len_data[datagenerator.train_dataset_size:datagenerator.train_dataset_size+buffer['data_idx']])
+                    end_bin_idx              = sum(datagenerator.len_data[datagenerator.train_dataset_size:datagenerator.train_dataset_size+buffer['data_idx']+1])-1
+                    buffer['output']         = self.readout(self.test_state_vars[start_bin_idx:end_bin_idx+1, :])
                 buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "test", datagenerator)
 
     def classify(self, data_idx, mode, datagenerator):
@@ -176,24 +175,27 @@ class neuronalreservoir_classification(neuronalreservoir):
 
         return confusion_matrix, confusion_matrix_axis
 
-    def save_buffer_single(self, buffer_idx):
+    def save_buffer_single(self, buffer_idx, save_buffer_IOincluded):
         buffer = self.data_buffer[buffer_idx]
         filename = "./data/buffer" + str(buffer_idx).zfill(2) + ".npz"
         logger.info(f"Saving buffer to {filename}")
         np.savez_compressed(filename, **buffer)
         filename = "./figure/buffer" + str(buffer_idx).zfill(2) + ".png"
-        plot_timeseries(self.data_buffer[buffer_idx], filename)
+        if save_buffer_IOincluded:
+            plot_timeseries(self.data_buffer[buffer_idx], filename)
         self.data_buffer[buffer_idx] = {}
 
-    def save_buffer_all(self):
+    def save_buffer_all(self, save_buffer_IOincluded):
         for buffer_idx, buffer in enumerate(self.data_buffer):
+            logger.info(f"Saving buffer No. {buffer_idx}")
             # Visualize all buffered time-series data
             filename = "./figure/buffer" + str(buffer_idx).zfill(2) + ".png"
-            plot_timeseries(self.data_buffer[buffer_idx], filename)
+            if save_buffer_IOincluded:
+                plot_timeseries(self.data_buffer[buffer_idx], filename)
             filename = "./data/buffer" + str(buffer_idx).zfill(2) + ".npz"
-            logger.info(f"Saving buffer to {filename}")
             np.savez_compressed(filename, **buffer)
             self.data_buffer[buffer_idx] = {}
+            logger.info(f"Saved buffer to {filename}")
 
 
 def plot_confusion_matrix(confusion_matrix, labels, title='Confusion Matrix', filename='confmat.png'):
@@ -264,7 +266,7 @@ def plot_timeseries(buffer, filename, detailed_reservoir_layer_plot=True):
     if detailed_reservoir_layer_plot:
         # Create vertically split subplots for reservoir states
         gs_reservoir = gridspec.GridSpecFromSubplotSpec(
-            3, 1, 
+            2, 1, 
             subplot_spec=gs[0, 1], 
             hspace=0.1 # Increase vertical spacing slightly
         )
@@ -277,12 +279,6 @@ def plot_timeseries(buffer, filename, detailed_reservoir_layer_plot=True):
         ax_reservoir_list.append(ax_reservoir)
 
         ax_reservoir = fig.add_subplot(gs_reservoir[1, 0])
-        for i in range(buffer['reservoir_state'].shape[1]):
-            ax_reservoir.plot(buffer['time_output'], buffer['reservoir_state'][:, i], linewidth=1.2)
-
-        ax_reservoir_list.append(ax_reservoir)
-
-        ax_reservoir = fig.add_subplot(gs_reservoir[2, 0])
         for i in range(buffer['variables'][1].shape[1]):
             ax_reservoir.plot(buffer['t_rec'], buffer['variables'][1][:, i], linewidth=1.2)
             ax_reservoir.set_xlabel('Time [ms]')

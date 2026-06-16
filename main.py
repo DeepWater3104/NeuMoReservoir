@@ -138,7 +138,7 @@ def main(cfg: DictConfig):
             # Save raw simulation data to buffer if index matches selected batches
             if save_buffer:
                 if (data_idx, "training") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
-                    neuronalreservoir.save_to_buffer("training", data_idx, spike_trains, datagenerator)
+                    neuronalreservoir.save_to_buffer("training", data_idx, spike_trains, datagenerator, params['task']['save_buffer_IOincluded'])
  
             # Accumulate spike timings for analysis
             v_rec_array    = np.array(neuronalreservoir.Vm_at_soma)
@@ -151,8 +151,8 @@ def main(cfg: DictConfig):
 
         # Train the readout weights based on simulated reservoir states
         neuronalreservoir.optimize(neuronalreservoir.train_state_vars, datagenerator.trainingdata_target)
-        neuronalreservoir.overwrite_buffer_after_optimized(datagenerator)
-        neuronalreservoir.save_buffer_all()
+        neuronalreservoir.overwrite_buffer_after_optimized(datagenerator, params['task']['save_buffer_IOincluded'])
+        neuronalreservoir.save_buffer_all(params['task']['save_buffer_IOincluded'])
 
         logger.info("--- Start Test Data Simulation ---")
         
@@ -178,8 +178,8 @@ def main(cfg: DictConfig):
             # Save test batch to buffer if index matches
             if save_buffer:
                 if (data_idx, "test") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
-                    neuronalreservoir.save_to_buffer("test", data_idx, spike_trains, datagenerator)
-                    neuronalreservoir.save_buffer_single(len(neuronalreservoir.data_buffer) - 1)
+                    neuronalreservoir.save_to_buffer("test", data_idx, spike_trains, datagenerator, params['task']['save_buffer_IOincluded'])
+                    neuronalreservoir.save_buffer_single(len(neuronalreservoir.data_buffer) - 1, params['task']['save_buffer_IOincluded'])
  
             v_rec_array    = np.array(neuronalreservoir.Vm_at_soma)
             t_rec_array = np.array(neuronalreservoir.t_rec.to_python())
