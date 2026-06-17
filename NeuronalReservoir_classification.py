@@ -45,43 +45,16 @@ class neuronalreservoir_classification(neuronalreservoir):
         if self.save_buffer:
             self.buffer_variable_list = []
             if self.record_target == 'potential':
-                total_length = 0
-                cumulative_length_dict = []
-                for sec in self.cell.all:
-                    cumulative_length = {'min':total_length, 'max':total_length+sec.L}
-                    cumulative_length_dict.append(cumulative_length)
-                    total_length += sec.L
+                for seg in self.record_segs:
+                    if hasattr(sec(rec_prop), '_ref_cai'):
+                        v = nrn.Vector().record(seg._ref_cai)
+                        self.buffer_variable_list.append(v)
 
-                # Randomly select recording locations based on physical length
-                while len(self.buffer_variable_list) < self.num_states:
-                    rec_loc = total_length * self.prng.random()
-
-                    for index, sec in enumerate(self.cell.all):
-                        if cumulative_length_dict[index]['min'] <= rec_loc and rec_loc < cumulative_length_dict[index]['max']:
-                            rec_prop = (rec_loc - cumulative_length_dict[index]['min']) / (cumulative_length_dict[index]['max'] - cumulative_length_dict[index]['min'])
-                            if hasattr(sec(rec_prop), '_ref_cai'):
-                                v = nrn.Vector().record(sec(rec_prop)._ref_cai)
-                                self.buffer_variable_list.append(v)
-                            else:
-                                break
             elif self.record_target == 'calcium_acum':
-                total_length = 0
-                cumulative_length_dict = []
-                for sec in self.cell.all:
-                    cumulative_length = {'min':total_length, 'max':total_length+sec.L}
-                    cumulative_length_dict.append(cumulative_length)
-                    total_length += sec.L
+                for seg in self.record_segs:
+                    v = nrn.Vector().record(seg._ref_v)
+                    self.buffer_variable_list.append(v)
 
-                # Record membrane potential at random locations
-                for rec in range(self.num_states):
-                    rec_loc = total_length * self.prng.random()
-
-                    for index, sec in enumerate(self.cell.all):
-                        if cumulative_length_dict[index]['min'] <= rec_loc and rec_loc < cumulative_length_dict[index]['max']:
-                            rec_prop = (rec_loc - cumulative_length_dict[index]['min']) / (cumulative_length_dict[index]['max'] - cumulative_length_dict[index]['min'])
-                            v = nrn.Vector().record(sec(rec_prop)._ref_v)
-                            self.buffer_variable_list.append(v)
-            
     def save_to_buffer(self, mode, data_idx, spike_train, datagenerator, save_buffer_IOincluded):
         logger.debug(f"Saving data to buffer. Mode: {mode}, Index: {data_idx}")
         buffer = {}

@@ -273,11 +273,12 @@ class neuronalreservoir():
 
     def _create_records(self):
         self.t_rec = nrn.Vector().record(nrn._ref_t)
+        self.record_segs = []
 
         if self.record_target == 'potential':
             total_length = 0
             cumulative_length_dict = []
-            for sec in self.cell.all:
+            for sec in get_soma_and_all_dend(self.cell):
                 cumulative_length = {'min':total_length, 'max':total_length+sec.L}
                 cumulative_length_dict.append(cumulative_length)
                 total_length += sec.L
@@ -286,17 +287,18 @@ class neuronalreservoir():
                 # Randomly pick a location along the total length
                 rec_loc = total_length * self.prng.random()
 
-                for index, sec in enumerate(self.cell.all):
+                for index, sec in enumerate(get_soma_and_all_dend(self.cell)):
                     if cumulative_length_dict[index]['min'] <= rec_loc and rec_loc < cumulative_length_dict[index]['max']:
                         # Calculate proportional position within the section
                         rec_prop = (rec_loc - cumulative_length_dict[index]['min']) / (cumulative_length_dict[index]['max'] - cumulative_length_dict[index]['min'])
                         v = nrn.Vector().record(sec(rec_prop)._ref_v)
+                        self.record_segs.append(sec(rec_prop))
                         self.v_rec_list.append(v)
 
         elif self.record_target == 'calcium_acum':
             total_length = 0
             cumulative_length_dict = []
-            for sec in self.cell.all:
+            for sec in get_soma_and_all_dend(self.cell):
                 cumulative_length = {'min':total_length, 'max':total_length+sec.L}
                 cumulative_length_dict.append(cumulative_length)
                 total_length += sec.L
@@ -304,12 +306,13 @@ class neuronalreservoir():
             while len(self.v_rec_list) < self.num_states:
                 rec_loc = total_length * self.prng.random()
 
-                for index, sec in enumerate(self.cell.all):
+                for index, sec in enumerate(get_soma_and_all_dend(self.cell)):
                     if cumulative_length_dict[index]['min'] <= rec_loc and rec_loc < cumulative_length_dict[index]['max']:
                         rec_prop = (rec_loc - cumulative_length_dict[index]['min']) / (cumulative_length_dict[index]['max'] - cumulative_length_dict[index]['min'])
                         # Check if calcium concentration pointer exists
                         if hasattr(sec(rec_prop), '_ref_cai'):
                             v = nrn.Vector().record(sec(rec_prop)._ref_cai)
+                            self.record_segs.append(sec(rec_prop))
                             self.v_rec_list.append(v)
                         else:
                             break
