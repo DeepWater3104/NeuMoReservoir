@@ -38,12 +38,10 @@ def main(cfg: DictConfig):
     logger.info(f"Task name: {params['task']['name']}")
     logger.info(f"Random seed: {seed}")
     
-    # 1. Compile MOD files (Check environment context for multirun/single run)
+    # 1. Compile MOD files (Resolve path dynamically using get_original_cwd)
     from neuron_simulation import run_nrnivmodl
-    if is_multirun:
-        cell_dir = "../../../../cells/" + str(params['cell_name'])
-    else:
-        cell_dir = "../../../cells/" + str(params['cell_name'])
+    from hydra.utils import get_original_cwd
+    cell_dir = os.path.join(get_original_cwd(), "cells", str(params['cell_name']))
     run_nrnivmodl(cell_dir)
     
     # 2. Load Cell Model and NEURON environment
