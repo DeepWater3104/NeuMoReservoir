@@ -114,12 +114,14 @@ class NeuMoAnalyzer:
             "seed": cfg.get("seed"),
         }
 
-    def extract_and_save_spikes(self, output_dir="extracted_data"):
+    def extract_and_save_spikes(self, output_dir="extracted_data", filename=None):
         """Stage 1: すべてのジョブからスパイクインデックス/時刻を抽出し、軽量なCSVとして保存する（高速化の肝）"""
+        import zipfile
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 
         all_spikes = []
+        corrupted_files = []
 
         print("=== Stage 1: Extracting Spike Indices ===")
         for job_dir in tqdm(self.job_dirs, desc="Jobs"):
@@ -131,9 +133,20 @@ class NeuMoAnalyzer:
 
             for bf in buffer_files:
                 file_name = Path(bf).name
-                data_ts = np.load(bf, allow_pickle=True)
-                t = data_ts["t_rec"]
-                vm = data_ts["variables"][1]  # Vm (T, N)
+                
+                try:
+                    data_ts = np.load(bf, allow_pickle=True)
+                    t = data_ts["t_rec"]
+                    vm = data_ts["variables"][1]  # Vm (T, N)
+                except (zipfile.BadZipFile, ValueError, KeyError, IndexError) as e:
+                    print(f"\n[WARNING] File corrupted. Skipped: {bf} (Error: {e})")
+                    corrupted_files.append({
+                        "job_id": job_dir.name,
+                        "file_path": str(bf),
+                        "error": str(e)
+                    })
+                    continue
+
                 duration_s = (t[-1] - t[0]) / 1000.0
 
                 # スパイク抽出 (get_spike_indicesのインターフェースに依存)
@@ -158,16 +171,24 @@ class NeuMoAnalyzer:
                         }
                     )
 
+        if corrupted_files:
+            corrupted_report_path = out_path / "corrupted_files_log.csv"
+            pd.DataFrame(corrupted_files).to_csv(corrupted_report_path, index=False)
+            print(f"\n[ALERT] Found {len(corrupted_files)} corrupted files. Log saved to: {corrupted_report_path}")
+
         df_spikes = pd.DataFrame(all_spikes)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        spike_file = out_path / f"df_spikes_meta_{timestamp}.pkl"
+        if filename:
+            spike_file = out_path / filename
+        else:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            spike_file = out_path / f"df_spikes_meta_{timestamp}.pkl"
 
         # インデックス文字列を保持するため、型変化のないPickleで保存
         df_spikes.to_pickle(spike_file)
         print(f"Spike metadata saved to: {spike_file}")
         return df_spikes
 
-    def generate_firing_rate_report(self, df_spikes, output_dir="extracted_data"):
+    def generate_firing_rate_report(self, df_spikes, output_dir="extracted_data", filename=None):
         """Stage 2-A: スパイクメタデータのみから発火率およびISI統計量を計算（再ロード不要のため超高速）"""
         print("=== Stage 2-A: Generating Firing Rate Report ===")
         rate_results = []
@@ -204,18 +225,22 @@ class NeuMoAnalyzer:
             )
 
         df_rate = pd.DataFrame(rate_results)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        csv_path = Path(output_dir) / f"df_rate_{timestamp}.csv"
+        if filename:
+            csv_path = Path(output_dir) / filename
+        else:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            csv_path = Path(output_dir) / f"df_rate_{timestamp}.csv"
         df_rate.to_csv(csv_path, index=False)
         print(f"Firing rate report saved to: {csv_path}")
         return df_rate
 
     def generate_effective_rank_report(
-        self, df_spikes, window_ms=5.0, output_dir="extracted_data"
+        self, df_spikes, window_ms=5.0, output_dir="extracted_data", filename=None
     ):
         """Stage 2-B: 必要なスパイク周辺のデータのみをピンポイントでロードしてランク計算（I/Oを極小化）"""
         print("=== Stage 2-B: Generating Effective Rank Report ===")
         rank_results = []
+        import zipfile
 
         # ファイル単位でグルーピングして、同一ファイルの再オープンを1回に抑える
         grouped = df_spikes.groupby(["job_id", "file_name"])
@@ -230,9 +255,14 @@ class NeuMoAnalyzer:
                 continue
 
             # ここで初めてファイルをロード（1ファイルにつき1回のみ）
-            data_ts = np.load(bf_path, allow_pickle=True)
-            t = data_ts["t_rec"]
-            ca = data_ts["variables"][0]  # Ca (T, N)
+            try:
+                data_ts = np.load(bf_path, allow_pickle=True)
+                t = data_ts["t_rec"]
+                ca = data_ts["variables"][0]  # Ca (T, N)
+            except (zipfile.BadZipFile, ValueError, KeyError, IndexError) as e:
+                print(f"\n[WARNING] File corrupted while calculating rank. Skipped: {bf_path} (Error: {e})")
+                continue
+                
             dt = t[1] - t[0]
             window_size = int(window_ms / dt)
 
@@ -276,8 +306,13 @@ class NeuMoAnalyzer:
                     )
 
         df_rank = pd.DataFrame(rank_results)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        csv_path = Path(output_dir) / f"df_rank_{timestamp}.csv"
+        if filename:
+            csv_path = Path(output_dir) / filename
+        else:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            csv_path = Path(output_dir) / f"df_rank_{timestamp}.csv"
         df_rank.to_csv(csv_path, index=False)
         print(f"Effective rank report saved to: {csv_path}")
         return df_rank
+
+
