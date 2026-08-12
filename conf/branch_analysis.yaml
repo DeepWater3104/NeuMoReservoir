@@ -1,0 +1,30 @@
+# Configuration for branch_analysis.py (morphology: branch count vs. path distance from soma)
+defaults:
+  - override hydra/launcher: joblib
+  - _self_
+hydra:
+  job:
+    chdir: True  # main.py と同様に outputs/YYYY-MM-DD/HH-MM-SS 以下へ出力する
+  launcher:
+    n_jobs: 20
+
+cell_name: "cell1/"
+
+# 解析対象の樹状突起ドメイン。syn_loc_condition と対応する: apical / basal / all
+domain: "apical"
+
+# 横軸（細胞体からのパス距離 [um]）。main.py の syn_loc_mean='range(0, 701, 100)' と揃えてある
+dist_start: 0
+dist_stop:  700   # 端点を含む
+dist_step:  100
+full_extent: False  # True にすると dist_stop を無視して最遠位点まで伸ばす
+
+# nrnivmodl はリポジトリ直下で実行され、アーキテクチャ名のフォルダ（x86_64 / arm64 等）を
+# 再利用する。コンパイル済みなら False でスキップできる。
+compile_mechanisms: True
+
+# 出力先（hydra の実行ディレクトリからの相対パス。main.py の慣習に合わせている）
+figure_dir: "figure"
+data_dir:   "data"
+prefix: null   # null なら branch_count_<domain>
+show: False
