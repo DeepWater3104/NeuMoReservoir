@@ -34,26 +34,10 @@ class neuronalreservoir_classification(neuronalreservoir):
         self.train_state_vars = np.zeros((0, self.num_states))
         self.test_state_vars = np.zeros((0, self.num_states))
 
-        self.create_records_for_buffer()
-
         self.data_buffer = []
 
-        
+
         logger.info("Initialized neuronalreservoir_classification.")
-
-    def create_records_for_buffer(self):
-        if self.save_buffer:
-            self.buffer_variable_list = []
-            if self.record_target == 'potential':
-                for seg in self.record_segs:
-                    if hasattr(sec(rec_prop), '_ref_cai'):
-                        v = nrn.Vector().record(seg._ref_cai)
-                        self.buffer_variable_list.append(v)
-
-            elif self.record_target == 'calcium_acum':
-                for seg in self.record_segs:
-                    v = nrn.Vector().record(seg._ref_v)
-                    self.buffer_variable_list.append(v)
 
     def save_to_buffer(self, mode, data_idx, spike_train, datagenerator, save_buffer_IOincluded):
         logger.debug(f"Saving data to buffer. Mode: {mode}, Index: {data_idx}")
@@ -61,10 +45,12 @@ class neuronalreservoir_classification(neuronalreservoir):
         buffer['mode']         = mode
         buffer['data_idx']     = data_idx
 
+        # variables[0]: the quantity used for readout, variables[1]: the companion
+        # quantity, both recorded at the same segments in the same order
         buffer['variables']    = []
-        v_rec_np = np.stack([v_rec.to_python() for v_rec in self.v_rec_list], axis=1)
+        v_rec_np = np.stack([v_rec.to_python() for v_rec in self.readout_rec_list], axis=1)
         buffer['variables'].append(v_rec_np)
-        v_rec_np = np.stack([v_rec.to_python() for v_rec in self.buffer_variable_list], axis=1)
+        v_rec_np = np.stack([v_rec.to_python() for v_rec in self.companion_rec_list], axis=1)
         buffer['variables'].append(v_rec_np)
         buffer['t_rec']        = np.array(self.t_rec.to_python())
     

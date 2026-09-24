@@ -171,8 +171,6 @@ class neuronalreservoir():
         self.reg = params['reg']
         self.cell = cell
 
-        self.v_rec_list = []
-
         self.prng = prng
         self.W = self.prng.random(self.num_states) # readout weight
         
@@ -271,53 +269,88 @@ class neuronalreservoir():
         
         logger.debug(f"Registered {len(sorted_spikes)} spike events.")
 
+    def _sample_unique_segs(self, num_segs):
+        """
+        Draw num_segs distinct segments, weighted by section length.
+
+        A position is drawn uniformly along the summed length of soma and dendrites
+        and resolved to the segment containing it. Draws landing on an
+        already-selected segment, or on one without a calcium concentration pointer,
+        are discarded and retried, so the returned segments are unique and both
+        _ref_v and _ref_cai are available at every one of them.
+        """
+        secs = get_soma_and_all_dend(self.cell)
+        total_length = 0
+        cumulative_length_dict = []
+        for sec in secs:
+            cumulative_length_dict.append({'min':total_length, 'max':total_length+sec.L})
+            total_length += sec.L
+
+        selected_segs = []
+        seen_segs = set()
+        max_draws = 100 * num_segs
+        for _ in range(max_draws):
+            if len(selected_segs) == num_segs:
+                break
+
+            # Randomly pick a location along the total length
+            rec_loc = total_length * self.prng.random()
+
+            for index, sec in enumerate(secs):
+                if cumulative_length_dict[index]['min'] <= rec_loc and rec_loc < cumulative_length_dict[index]['max']:
+                    # Calculate proportional position within the section
+                    rec_prop = (rec_loc - cumulative_length_dict[index]['min']) / (cumulative_length_dict[index]['max'] - cumulative_length_dict[index]['min'])
+                    seg = sec(rec_prop)
+                    # Discard and redraw on a duplicate or a segment without calcium
+                    if seg not in seen_segs and hasattr(seg, '_ref_cai'):
+                        seen_segs.add(seg)
+                        selected_segs.append(seg)
+                    break
+
+        if len(selected_segs) < num_segs:
+            raise RuntimeError(
+                f"Found only {len(selected_segs)} of {num_segs} unique segments carrying a calcium "
+                f"pointer within {max_draws} draws. num_states likely exceeds the number of "
+                f"available segments."
+            )
+
+        return selected_segs
+
     def _create_records(self):
+        """
+        Record both physical quantities at one shared set of unique segments.
+
+        num_states distinct segments are drawn once, and both membrane potential
+        (v_rec_list) and accumulated calcium (ca_rec_list) are recorded at each of
+        them, so the two lists share their order and their locations.
+        record_target only selects which of the two feeds the readout; see
+        readout_rec_list / companion_rec_list.
+        """
         self.t_rec = nrn.Vector().record(nrn._ref_t)
-        self.record_segs = []
+        self.record_segs = self._sample_unique_segs(self.num_states)
 
+        self.v_rec_list  = [nrn.Vector().record(seg._ref_v)   for seg in self.record_segs]
+        self.ca_rec_list = [nrn.Vector().record(seg._ref_cai) for seg in self.record_segs]
+
+        logger.info(f"Recording setup complete at {len(self.record_segs)} unique segments; readout target: {self.record_target}")
+
+    @property
+    def readout_rec_list(self):
+        """Recordings that feed the readout, selected by record_target."""
         if self.record_target == 'potential':
-            total_length = 0
-            cumulative_length_dict = []
-            for sec in get_soma_and_all_dend(self.cell):
-                cumulative_length = {'min':total_length, 'max':total_length+sec.L}
-                cumulative_length_dict.append(cumulative_length)
-                total_length += sec.L
-
-            for rec in range(self.num_states):
-                # Randomly pick a location along the total length
-                rec_loc = total_length * self.prng.random()
-
-                for index, sec in enumerate(get_soma_and_all_dend(self.cell)):
-                    if cumulative_length_dict[index]['min'] <= rec_loc and rec_loc < cumulative_length_dict[index]['max']:
-                        # Calculate proportional position within the section
-                        rec_prop = (rec_loc - cumulative_length_dict[index]['min']) / (cumulative_length_dict[index]['max'] - cumulative_length_dict[index]['min'])
-                        v = nrn.Vector().record(sec(rec_prop)._ref_v)
-                        self.record_segs.append(sec(rec_prop))
-                        self.v_rec_list.append(v)
-
+            return self.v_rec_list
         elif self.record_target == 'calcium_acum':
-            total_length = 0
-            cumulative_length_dict = []
-            for sec in get_soma_and_all_dend(self.cell):
-                cumulative_length = {'min':total_length, 'max':total_length+sec.L}
-                cumulative_length_dict.append(cumulative_length)
-                total_length += sec.L
+            return self.ca_rec_list
+        raise ValueError(f"unsupported record_target: {self.record_target}")
 
-            while len(self.v_rec_list) < self.num_states:
-                rec_loc = total_length * self.prng.random()
-
-                for index, sec in enumerate(get_soma_and_all_dend(self.cell)):
-                    if cumulative_length_dict[index]['min'] <= rec_loc and rec_loc < cumulative_length_dict[index]['max']:
-                        rec_prop = (rec_loc - cumulative_length_dict[index]['min']) / (cumulative_length_dict[index]['max'] - cumulative_length_dict[index]['min'])
-                        # Check if calcium concentration pointer exists
-                        if hasattr(sec(rec_prop), '_ref_cai'):
-                            v = nrn.Vector().record(sec(rec_prop)._ref_cai)
-                            self.record_segs.append(sec(rec_prop))
-                            self.v_rec_list.append(v)
-                        else:
-                            break
-        
-        logger.info(f"Recording setup complete for target: {self.record_target}")
+    @property
+    def companion_rec_list(self):
+        """The other physical quantity, at the same segments as readout_rec_list."""
+        if self.record_target == 'potential':
+            return self.ca_rec_list
+        elif self.record_target == 'calcium_acum':
+            return self.v_rec_list
+        raise ValueError(f"unsupported record_target: {self.record_target}")
 
     def generate_dynamics(self, total_duration):
         nrn.continuerun( total_duration * ms)
@@ -325,7 +358,7 @@ class neuronalreservoir():
     def get_binned_states(self, interval_start, num_bins, time_integration):
         if time_integration:
             t_rec = np.array(self.t_rec.to_python())
-            v_rec = np.column_stack([np.array(v.to_python()) for v in self.v_rec_list])
+            v_rec = np.column_stack([np.array(v.to_python()) for v in self.readout_rec_list])
             t_start = interval_start
             t_end   = t_rec[-1]
 
@@ -352,7 +385,7 @@ class neuronalreservoir():
 
         elif not time_integration:
             t_rec = np.array(self.t_rec.to_python())
-            v_rec = np.column_stack([np.array(v.to_python()) for v in self.v_rec_list])
+            v_rec = np.column_stack([np.array(v.to_python()) for v in self.readout_rec_list])
             return v_rec
 
     def readout(self, state_vars):
