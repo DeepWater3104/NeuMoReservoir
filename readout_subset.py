@@ -191,6 +191,8 @@ def summarise(curves, reference_accuracy):
         mask = curves["size"] == size
         test_scores = curves["test_accuracy"][mask]
         train_scores = curves["train_accuracy"][mask]
+        # Both series are summarised the same way; reporting a spread for only one
+        # of them is what made the earlier figure misleading.
         summary["sizes"].append({
             "num_readout_sites": int(size),
             "num_draws": int(mask.sum()),
@@ -199,6 +201,9 @@ def summarise(curves, reference_accuracy):
             "test_accuracy_min": float(test_scores.min()),
             "test_accuracy_max": float(test_scores.max()),
             "train_accuracy_mean": float(train_scores.mean()),
+            "train_accuracy_sd": float(train_scores.std()),
+            "train_accuracy_min": float(train_scores.min()),
+            "train_accuracy_max": float(train_scores.max()),
         })
 
     full = [entry for entry in summary["sizes"]
@@ -272,7 +277,7 @@ def run_plot(cfg, original_cwd):
 
         sizes = np.array(sorted(set(curves["size"].tolist())))
 
-        # Both series get the same treatment — mean and interquartile range over the
+        # Both series get the same treatment — mean and standard deviation over the
         # subsets drawn at each size — so the spread of one can be read against the
         # other. Showing a spread for only one of them invites reading the other as
         # having none.
@@ -283,9 +288,10 @@ def run_plot(cfg, original_cwd):
             mean, low, high = [], [], []
             for size in sizes:
                 scores = curves[key][curves["size"] == size]
-                mean.append(scores.mean())
-                low.append(np.percentile(scores, 25))
-                high.append(np.percentile(scores, 75))
+                centre, spread = scores.mean(), scores.std()
+                mean.append(centre)
+                low.append(centre - spread)
+                high.append(centre + spread)
 
             ax.fill_between(sizes, low, high, color=color, alpha=0.18,
                             linewidth=0, zorder=2)
@@ -296,7 +302,7 @@ def run_plot(cfg, original_cwd):
     ax.set_ylabel("Accuracy")
     ax.set_title("Readout accuracy vs. number of recording sites", pad=20)
     ax.text(0.5, 1.03,
-            "Line: mean over random subsets   ·   Band: interquartile range",
+            "Line: mean over random subsets   ·   Band: ± 1 standard deviation",
             transform=ax.transAxes, ha="center", fontsize=9, color="#52514e")
     ax.set_ylim(0, 1.02)
     ax.grid(True, axis="y", linestyle=":", alpha=0.4)
