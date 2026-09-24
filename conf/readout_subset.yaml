@@ -1,0 +1,34 @@
+# Configuration for readout_subset.py
+# (accuracy as a function of how many recording sites feed the readout)
+defaults:
+  - _self_
+hydra:
+  job:
+    chdir: True  # main.py と同様に outputs/YYYY-MM-DD/HH-MM-SS 以下へ出力する
+
+# compute: 状態行列から部分抽出して Accuracy を計算し curves.npz / results.json を書く
+# plot:    保存済みの curves.npz を読んで図を描く（再計算しない）
+mode: "compute"
+
+# compute モード: main.py のランのディレクトリ。data/reservoir_states.npz を読む。
+# 相対パスは元の作業ディレクトリ（リポジトリルート）から解決する。
+run_dir: null
+
+# plot モード: compute モードが書いた curves.npz のパス。複数渡せば1枚に重ねる。
+curves_path: null
+
+# readout に使う記録地点の数（横軸）。記録地点の総数を超える値は捨てる。
+subset_sizes: [2, 5, 10, 20, 30, 50, 70, 90, 100]
+
+# 各点数につき何通りの部分集合を引くか。全点を使う場合は組み合わせが1通りなので1回に落ちる。
+num_draws: 200
+
+# 部分集合の抽出に使う乱数種。シミュレーションの seed とは独立。
+seed: 20260924
+
+# null なら reservoir_states.npz に保存された reg（シミュレーション時の値）を使う
+reg: null
+
+figure_dir: "figure"
+data_dir:   "data"
+show: False
