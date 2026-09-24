@@ -194,6 +194,28 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
                  confusion_matrix=confusion_matrix,
                  axis_labels=confusion_matrix_axis)
 
+        # Save the binned reservoir states so the readout can be refitted offline on
+        # any subset of the recording sites without rerunning the simulation.
+        # Columns of the state matrices correspond to neuronalreservoir.record_segs,
+        # described here by their section name and distance from the soma.
+        nrn.distance(0, 0.5, sec=neuronalreservoir.cell.soma[0])
+        np.savez_compressed("./data/reservoir_states.npz",
+                            train_state_vars=neuronalreservoir.train_state_vars,
+                            test_state_vars=neuronalreservoir.test_state_vars,
+                            trainingdata_target=datagenerator.trainingdata_target,
+                            train_label=datagenerator.train_label,
+                            test_label=datagenerator.test_label,
+                            len_data=np.array(datagenerator.len_data),
+                            train_dataset_size=datagenerator.train_dataset_size,
+                            test_dataset_size=datagenerator.test_dataset_size,
+                            bin_width=params['task']['bin_width'],
+                            reg=params['reg'],
+                            record_target=params['record_target'],
+                            seg_names=np.array([seg.sec.name() for seg in neuronalreservoir.record_segs]),
+                            seg_x=np.array([seg.x for seg in neuronalreservoir.record_segs]),
+                            seg_distance=np.array([nrn.distance(seg) for seg in neuronalreservoir.record_segs]))
+        logger.info("Saved reservoir states to ./data/reservoir_states.npz")
+
         from Analysis import get_firing_rate
         total_duration_sec = params['task']['pattern_duration_ms'] * (params['task']['num_outputs'] * (params['task']['n_repetition'] + 1)) * 0.001
         firing_rate = get_firing_rate(neuronalreservoir.spike_timings, total_duration_sec)
