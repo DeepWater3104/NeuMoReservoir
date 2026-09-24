@@ -190,7 +190,7 @@ class neuronalreservoir():
         distances = []
 
         # 1. collect information for all segments
-        if self.syn_loc_condition == "random" or self.syn_loc_condition == "gaussian":
+        if self.syn_loc_condition == "uniform" or self.syn_loc_condition == "gaussian":
             for sec in get_soma_and_all_dend(self.cell):
                 for seg in sec:
                     all_segs.append(seg)
@@ -218,7 +218,9 @@ class neuronalreservoir():
             mu    = self.syn_loc_mean
             sigma = self.syn_loc_std
             weights = areas * np.exp(-((distances - mu)**2) / (2 * sigma**2))
-        elif self.syn_loc_condition == "random":
+        elif self.syn_loc_condition == "uniform":
+            # Weighting by area alone places synapses uniformly per unit membrane
+            # area over the soma and the whole dendritic tree.
             weights = areas
 
         # 3. Normalize weights (sum to 1)

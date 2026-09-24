@@ -271,31 +271,33 @@ def run_plot(cfg, original_cwd):
             curves = {key: npz[key] for key in npz.files}
 
         sizes = np.array(sorted(set(curves["size"].tolist())))
-        test_mean, test_lo, test_hi, train_mean = [], [], [], []
-        for size in sizes:
-            mask = curves["size"] == size
-            test_scores = curves["test_accuracy"][mask]
-            test_mean.append(test_scores.mean())
-            test_lo.append(np.percentile(test_scores, 25))
-            test_hi.append(np.percentile(test_scores, 75))
-            train_mean.append(curves["train_accuracy"][mask].mean())
 
-            # Every draw as a faint tick, so the spread is visible as data and not
-            # only as a summarised band.
-            ax.plot(np.full(test_scores.shape, size), test_scores,
-                    marker="_", linestyle="none", markersize=7,
-                    color=COLOR_TEST, alpha=0.12, zorder=1)
+        # Both series get the same treatment — mean and interquartile range over the
+        # subsets drawn at each size — so the spread of one can be read against the
+        # other. Showing a spread for only one of them invites reading the other as
+        # having none.
+        series = (("test_accuracy", "Test", COLOR_TEST, "-"),
+                  ("train_accuracy", "Training", COLOR_TRAIN, "--"))
 
-        ax.fill_between(sizes, test_lo, test_hi, color=COLOR_TEST, alpha=0.18,
-                        linewidth=0, zorder=2)
-        ax.plot(sizes, test_mean, color=COLOR_TEST, linewidth=2, marker="o",
-                markersize=5, zorder=4, label="Test")
-        ax.plot(sizes, train_mean, color=COLOR_TRAIN, linewidth=2, marker="o",
-                markersize=5, linestyle="--", zorder=3, label="Training")
+        for key, label, color, linestyle in series:
+            mean, low, high = [], [], []
+            for size in sizes:
+                scores = curves[key][curves["size"] == size]
+                mean.append(scores.mean())
+                low.append(np.percentile(scores, 25))
+                high.append(np.percentile(scores, 75))
+
+            ax.fill_between(sizes, low, high, color=color, alpha=0.18,
+                            linewidth=0, zorder=2)
+            ax.plot(sizes, mean, color=color, linewidth=2, linestyle=linestyle,
+                    marker="o", markersize=5, zorder=3, label=label)
 
     ax.set_xlabel("Number of recording sites feeding the readout")
     ax.set_ylabel("Accuracy")
-    ax.set_title("Readout accuracy vs. number of recording sites")
+    ax.set_title("Readout accuracy vs. number of recording sites", pad=20)
+    ax.text(0.5, 1.03,
+            "Line: mean over random subsets   ·   Band: interquartile range",
+            transform=ax.transAxes, ha="center", fontsize=9, color="#52514e")
     ax.set_ylim(0, 1.02)
     ax.grid(True, axis="y", linestyle=":", alpha=0.4)
     ax.spines[["top", "right"]].set_visible(False)
