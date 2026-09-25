@@ -283,50 +283,37 @@ class neuronalreservoir():
 
     def _sample_unique_segs(self, num_segs):
         """
-        Draw num_segs distinct segments, weighted by section length.
+        Draw num_segs distinct segments with probability proportional to length.
 
-        A position is drawn uniformly along the summed length of soma and dendrites
-        and resolved to the segment containing it. Draws landing on an
-        already-selected segment, or on one without a calcium concentration pointer,
-        are discarded and retried, so the returned segments are unique and both
-        _ref_v and _ref_cai are available at every one of them.
+        Only segments carrying a calcium concentration pointer are eligible, so both
+        _ref_v and _ref_cai can be recorded at every one of them.
+
+        Drawing a position along the tree and redrawing whenever it lands on an
+        already-selected segment expresses the same distribution, but its cost grows
+        without bound as num_segs approaches the number of eligible segments: the
+        last few become rare coupons, and the shortest segment here is drawn once in
+        eight thousand. Sampling without replacement directly is the same thing done
+        in one step, and it cannot fail to terminate.
         """
-        secs = get_soma_and_all_dend(self.cell)
-        total_length = 0
-        cumulative_length_dict = []
-        for sec in secs:
-            cumulative_length_dict.append({'min':total_length, 'max':total_length+sec.L})
-            total_length += sec.L
+        segs, lengths = [], []
+        for sec in get_soma_and_all_dend(self.cell):
+            segment_length = sec.L / sec.nseg
+            for seg in sec:
+                if hasattr(seg, '_ref_cai'):
+                    segs.append(seg)
+                    lengths.append(segment_length)
 
-        selected_segs = []
-        seen_segs = set()
-        max_draws = 100 * num_segs
-        for _ in range(max_draws):
-            if len(selected_segs) == num_segs:
-                break
-
-            # Randomly pick a location along the total length
-            rec_loc = total_length * self._record_prng.random()
-
-            for index, sec in enumerate(secs):
-                if cumulative_length_dict[index]['min'] <= rec_loc and rec_loc < cumulative_length_dict[index]['max']:
-                    # Calculate proportional position within the section
-                    rec_prop = (rec_loc - cumulative_length_dict[index]['min']) / (cumulative_length_dict[index]['max'] - cumulative_length_dict[index]['min'])
-                    seg = sec(rec_prop)
-                    # Discard and redraw on a duplicate or a segment without calcium
-                    if seg not in seen_segs and hasattr(seg, '_ref_cai'):
-                        seen_segs.add(seg)
-                        selected_segs.append(seg)
-                    break
-
-        if len(selected_segs) < num_segs:
+        if len(segs) < num_segs:
             raise RuntimeError(
-                f"Found only {len(selected_segs)} of {num_segs} unique segments carrying a calcium "
-                f"pointer within {max_draws} draws. num_states likely exceeds the number of "
-                f"available segments."
+                f"The cell offers {len(segs)} segments carrying a calcium pointer but "
+                f"num_states is {num_segs}; there are not enough distinct sites to record."
             )
 
-        return selected_segs
+        weights = np.array(lengths)
+        chosen_indices = self._record_prng.choice(
+            len(segs), size=num_segs, replace=False, p=weights / weights.sum())
+
+        return [segs[index] for index in chosen_indices]
 
     def _create_records(self):
         """

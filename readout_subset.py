@@ -8,20 +8,26 @@ be settled from the saved state matrices alone: draw a subset of the recorded
 sites, refit, reclassify, and repeat.
 
 The horizontal axis is therefore the number of sites feeding the readout and the
-vertical axis is accuracy, with a spread over subsets at each size. A flat spread
-means the choice of sites does not matter and treating accuracy as a property of
-the dynamics is justified; a wide one means the choice is a factor in its own
-right.
+vertical axis is accuracy, with a spread over subsets at each size.
+
+Subsetting one run holds the dynamics fixed, so it measures only how much the
+choice of readout sites matters. It says nothing about how much the accuracy
+would move had the synapses landed elsewhere, which is a separate and larger
+source of variation. Passing several runs — a seed sweep, named individually or
+by a glob over a multirun — separates the two: each run is reduced to its mean
+at every size, and the spread of those means is reported alongside the spread
+within a run.
 
 Following SPEC_NumericalCode the computation never draws: ``mode=compute`` writes
 ``curves.npz`` and ``results.json``, and ``mode=plot`` reads them back, so the
-figure can be reworked without recomputing and several runs can be overlaid.
+figure can be reworked without recomputing.
 
     uv run readout_subset.py run_dir=outputs/2026-09-24/15-16-45
+    uv run readout_subset.py 'run_dir=multirun/2026-09-25/11-29-26/*'
     uv run readout_subset.py mode=plot curves_path=outputs/.../data/curves.npz
-    uv run readout_subset.py run_dir=... num_draws=500 subset_sizes=[5,25,50,100]
 """
 
+import glob
 import json
 import logging
 import os
@@ -219,41 +225,107 @@ def summarise(curves, reference_accuracy):
     return summary
 
 
-def run_compute(cfg, original_cwd):
-    run_dir = cfg.run_dir
+def resolve_run_dirs(run_dir, original_cwd):
+    """Expand the run_dir setting into a list of directories.
+
+    A single path, a list of paths, or a glob such as
+    multirun/2026-09-25/11-29-26/* are all accepted, so a sweep's jobs can be
+    analysed together without naming each one.
+    """
     if run_dir is None:
         raise ValueError("run_dir is required in compute mode "
-                         "(e.g. run_dir=outputs/2026-09-24/15-16-45)")
-    if not os.path.isabs(run_dir):
-        run_dir = os.path.join(original_cwd, run_dir)
+                         "(e.g. run_dir=outputs/2026-09-24/15-16-45, or a glob over "
+                         "a multirun's job directories)")
 
-    data, reference_accuracy = load_states(run_dir)
+    patterns = [run_dir] if isinstance(run_dir, str) else list(run_dir)
+    resolved = []
+    for pattern in patterns:
+        if not os.path.isabs(pattern):
+            pattern = os.path.join(original_cwd, pattern)
+        matches = sorted(glob.glob(pattern)) if glob.has_magic(pattern) else [pattern]
+        resolved.extend(match for match in matches
+                        if os.path.exists(os.path.join(match, STATES_FILENAME)))
 
-    reg = float(data["reg"]) if cfg.reg is None else float(cfg.reg)
-    logger.info(f"Ridge parameter: {reg}")
+    if not resolved:
+        raise FileNotFoundError(f"No run directory holding {STATES_FILENAME} matched {patterns}")
+    return resolved
 
-    curves = sweep_subset_sizes(data, cfg.subset_sizes, int(cfg.num_draws),
-                                int(cfg.seed), reg)
-    summary = summarise(curves, reference_accuracy)
 
-    if "refit_minus_reported" in summary:
-        logger.info(f"Refit on all sites differs from the run's own accuracy by "
-                    f"{summary['refit_minus_reported']:+.4f}")
+def run_compute(cfg, original_cwd):
+    run_dirs = resolve_run_dirs(cfg.run_dir, original_cwd)
+    logger.info(f"Analysing {len(run_dirs)} run(s)")
+
+    per_run, summaries = [], []
+    for run_index, run_dir in enumerate(run_dirs):
+        data, reference_accuracy = load_states(run_dir)
+        reg = float(data["reg"]) if cfg.reg is None else float(cfg.reg)
+
+        curves = sweep_subset_sizes(data, cfg.subset_sizes, int(cfg.num_draws),
+                                    int(cfg.seed) + run_index, reg)
+        curves["run"] = np.full(curves["size"].shape, run_index)
+        per_run.append(curves)
+
+        summary = summarise(curves, reference_accuracy)
+        summary["source_run"] = run_dir
+        summary["reg"] = reg
+        summaries.append(summary)
+        if "refit_minus_reported" in summary:
+            logger.info(f"  [{run_index}] refit on all sites differs from the run's own "
+                        f"accuracy by {summary['refit_minus_reported']:+.4f}")
+
+    num_sites = {int(c["num_sites"]) for c in per_run}
+    if len(num_sites) > 1:
+        raise ValueError(f"Runs record different numbers of sites ({sorted(num_sites)}); "
+                         f"their curves do not share an axis")
+
+    combined = {key: np.concatenate([c[key] for c in per_run])
+                for key in ("size", "draw", "run", "train_accuracy", "test_accuracy")}
+    combined["num_sites"] = per_run[0]["num_sites"]
 
     os.makedirs(cfg.data_dir, exist_ok=True)
     curves_path = os.path.join(cfg.data_dir, "curves.npz")
-    np.savez_compressed(curves_path, **curves,
-                        seg_distance=data["seg_distance"],
-                        reg=np.array(reg),
-                        source_run=np.array(run_dir))
+    np.savez_compressed(curves_path, **combined,
+                        source_runs=np.array(run_dirs),
+                        reg=np.array(summaries[0]["reg"]))
     logger.info(f"Saved {curves_path}")
 
-    summary["source_run"] = run_dir
-    summary["reg"] = reg
+    results = {"num_runs": len(run_dirs), "runs": summaries,
+               "across_runs": summarise_across_runs(combined)}
     results_path = os.path.join(cfg.data_dir, "results.json")
     with open(results_path, "w") as f:
-        json.dump(summary, f, indent=2)
+        json.dump(results, f, indent=2)
     logger.info(f"Saved {results_path}")
+
+
+def summarise_across_runs(curves):
+    """Separate the two things that make accuracy vary.
+
+    Within a run the dynamics are fixed and only the choice of readout sites
+    changes; across runs the synapse placement and the input differ too. Each run
+    is first reduced to its mean at every size, and the spread of those means is
+    what the across-run figures show.
+    """
+    rows = []
+    for size in sorted(set(curves["size"].tolist())):
+        at_size = curves["size"] == size
+        run_means = np.array([curves["test_accuracy"][at_size & (curves["run"] == r)].mean()
+                              for r in sorted(set(curves["run"][at_size].tolist()))])
+        train_means = np.array([curves["train_accuracy"][at_size & (curves["run"] == r)].mean()
+                                for r in sorted(set(curves["run"][at_size].tolist()))])
+        within = np.mean([curves["test_accuracy"][at_size & (curves["run"] == r)].std()
+                          for r in sorted(set(curves["run"][at_size].tolist()))])
+        rows.append({
+            "num_readout_sites": int(size),
+            "num_runs": int(len(run_means)),
+            "test_accuracy_mean": float(run_means.mean()),
+            "test_accuracy_sd_across_runs": float(run_means.std()),
+            "test_accuracy_sd_within_run": float(within),
+            "test_accuracy_min": float(run_means.min()),
+            "test_accuracy_max": float(run_means.max()),
+            "train_accuracy_mean": float(train_means.mean()),
+            "train_accuracy_sd_across_runs": float(train_means.std()),
+        })
+    return rows
 
 
 def run_plot(cfg, original_cwd):
@@ -277,17 +349,31 @@ def run_plot(cfg, original_cwd):
 
         sizes = np.array(sorted(set(curves["size"].tolist())))
 
-        # Both series get the same treatment — mean and standard deviation over the
-        # subsets drawn at each size — so the spread of one can be read against the
-        # other. Showing a spread for only one of them invites reading the other as
-        # having none.
+        # Accuracy varies for two reasons and they are not the same size. Within one
+        # simulation only the choice of readout sites changes; across simulations the
+        # synapse placement and the input change too. When several runs are present
+        # each is reduced to its mean first, and the band is the spread of those
+        # means — the uncertainty of the condition, not of one draw within it.
+        runs = curves["run"] if "run" in curves else np.zeros(curves["size"].shape, dtype=int)
+        run_ids = sorted(set(runs.tolist()))
+        across_runs = len(run_ids) > 1
+        spread_label = ("± 1 sd across simulations" if across_runs
+                        else "± 1 sd across random subsets")
+
+        # Both series get the same treatment; showing a spread for only one of them
+        # invites reading the other as having none.
         series = (("test_accuracy", "Test", COLOR_TEST, "-"),
                   ("train_accuracy", "Training", COLOR_TRAIN, "--"))
 
         for key, label, color, linestyle in series:
             mean, low, high = [], [], []
             for size in sizes:
-                scores = curves[key][curves["size"] == size]
+                at_size = curves["size"] == size
+                if across_runs:
+                    scores = np.array([curves[key][at_size & (runs == r)].mean()
+                                       for r in run_ids if (at_size & (runs == r)).any()])
+                else:
+                    scores = curves[key][at_size]
                 centre, spread = scores.mean(), scores.std()
                 mean.append(centre)
                 low.append(centre - spread)
@@ -301,8 +387,7 @@ def run_plot(cfg, original_cwd):
     ax.set_xlabel("Number of recording sites feeding the readout")
     ax.set_ylabel("Accuracy")
     ax.set_title("Readout accuracy vs. number of recording sites", pad=20)
-    ax.text(0.5, 1.03,
-            "Line: mean over random subsets   ·   Band: ± 1 standard deviation",
+    ax.text(0.5, 1.03, f"Line: mean   ·   Band: {spread_label}",
             transform=ax.transAxes, ha="center", fontsize=9, color="#52514e")
     ax.set_ylim(0, 1.02)
     ax.grid(True, axis="y", linestyle=":", alpha=0.4)
