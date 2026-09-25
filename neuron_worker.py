@@ -61,14 +61,25 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
 
         datagenerator = RandomPattern_datagenerator(params['task'], prng)
 
-        save_buffer = params['task']['save_buffer']
-        if not save_buffer:
-            logger.info("Detailed buffer saving is DISABLED.")
-        else:
-            logger.info("Detailed buffer saving is ENABLED.")
+        output = params['output']
+        save_buffer = output['buffers']
+        logger.info(f"Detailed buffer saving is {'ENABLED' if save_buffer else 'DISABLED'}.")
 
-            params['batches_to_save_idx'] = []
-            params['batches_to_save_mode'] = []
+        # plot_timeseries reads the target and output that buffer_io_included adds, so
+        # the figures are only possible when both flags are on.
+        plot_buffer_figures = output['buffer_figures'] and output['buffer_io_included']
+        if output['buffer_figures'] and not output['buffer_io_included']:
+            logger.warning("output.buffer_figures needs output.buffer_io_included; no buffer figures will be drawn.")
+
+        # Which trials get buffered is drawn from a generator of its own rather than
+        # from prng. Drawing it from prng would advance the shared stream, so
+        # switching buffering off would shift every later draw — synapse placement
+        # included — and silently change the simulation an output flag is not
+        # supposed to touch.
+        params['batches_to_save_idx'] = []
+        params['batches_to_save_mode'] = []
+        if save_buffer:
+            buffer_prng = np.random.default_rng([seed, 0xB0FFE2])
 
             # Register training indices to be saved later
             for data_idx in range(datagenerator.train_dataset_size):
@@ -78,7 +89,7 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
             # Select a subset of test indices (up to 60) for visualization/saving
             test_indices = range(datagenerator.test_dataset_size)
             num_test_samples = min(60, len(test_indices))
-            selected_test_indices = prng.choice(test_indices, size=num_test_samples, replace=False)
+            selected_test_indices = buffer_prng.choice(test_indices, size=num_test_samples, replace=False)
 
             for data_idx in selected_test_indices:
                 params['batches_to_save_idx'].append(data_idx)
@@ -88,6 +99,20 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
         from Analysis import get_spike_timings
         neuronalreservoir = neuronalreservoir_classification(cell, prng, params)
         nrn.finitialize(-65 * mV)
+
+        # Every requested quantity is binned at the same segments and over the same
+        # intervals as the readout, so a later analysis can relate the dynamics at a
+        # site to what the readout made of it. The readout itself is always fitted on
+        # train_state_vars, whichever quantity record_target selects.
+        quantities = list(output['reservoir_states_quantities']) if output['reservoir_states'] else []
+        collected = {q: {"training": [], "test": []} for q in quantities}
+
+        def collect_states(mode, interval_start, num_bins):
+            for quantity in quantities:
+                collected[quantity][mode].append(
+                    neuronalreservoir.get_binned_states(
+                        interval_start, num_bins, params['time_integration'],
+                        rec_list=neuronalreservoir.rec_list_for(quantity)))
 
         logger.info("--- Start Training Data Simulation ---")
 
@@ -114,11 +139,12 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
             # Store binned states for later optimization (readout training)
             shape_before_concatenate = np.shape(neuronalreservoir.train_state_vars)
             neuronalreservoir.train_state_vars = np.concatenate([neuronalreservoir.train_state_vars, state_vars], axis=0)
+            collect_states("training", interval_start, num_bins)
 
             # Save raw simulation data to buffer if index matches selected batches
             if save_buffer:
                 if (data_idx, "training") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
-                    neuronalreservoir.save_to_buffer("training", data_idx, spike_trains, datagenerator, params['task']['save_buffer_IOincluded'])
+                    neuronalreservoir.save_to_buffer("training", data_idx, spike_trains, datagenerator, output['buffer_io_included'])
 
             # Accumulate spike timings for analysis
             v_rec_array = np.array(neuronalreservoir.Vm_at_soma)
@@ -131,8 +157,8 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
 
         # Train the readout weights based on simulated reservoir states
         neuronalreservoir.optimize(neuronalreservoir.train_state_vars, datagenerator.trainingdata_target)
-        neuronalreservoir.overwrite_buffer_after_optimized(datagenerator, params['task']['save_buffer_IOincluded'])
-        neuronalreservoir.save_buffer_all(params['task']['save_buffer_IOincluded'])
+        neuronalreservoir.overwrite_buffer_after_optimized(datagenerator, output['buffer_io_included'])
+        neuronalreservoir.save_buffer_all(plot_buffer_figures)
 
         logger.info("--- Start Test Data Simulation ---")
 
@@ -154,12 +180,13 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
             state_vars = neuronalreservoir.get_binned_states(interval_start, num_bins, params['time_integration'])
 
             neuronalreservoir.test_state_vars = np.concatenate([neuronalreservoir.test_state_vars, state_vars], axis=0)
+            collect_states("test", interval_start, num_bins)
 
             # Save test batch to buffer if index matches
             if save_buffer:
                 if (data_idx, "test") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
-                    neuronalreservoir.save_to_buffer("test", data_idx, spike_trains, datagenerator, params['task']['save_buffer_IOincluded'])
-                    neuronalreservoir.save_buffer_single(len(neuronalreservoir.data_buffer) - 1, params['task']['save_buffer_IOincluded'])
+                    neuronalreservoir.save_to_buffer("test", data_idx, spike_trains, datagenerator, output['buffer_io_included'])
+                    neuronalreservoir.save_buffer_single(len(neuronalreservoir.data_buffer) - 1, plot_buffer_figures)
 
             v_rec_array = np.array(neuronalreservoir.Vm_at_soma)
             t_rec_array = np.array(neuronalreservoir.t_rec.to_python())
@@ -171,56 +198,69 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
 
         logger.info("--- Start Saving Data and Images ---")
 
-        # Evaluate and plot classification results for Training set
-        confusion_matrix, confusion_matrix_axis = neuronalreservoir.get_classification_result("training", datagenerator)
-        from NeuronalReservoir_classification import plot_confusion_matrix
-        plot_confusion_matrix(
-            confusion_matrix=confusion_matrix,
-            labels=confusion_matrix_axis,
-            title='Classification Confusion Matrix (Training Data)',
-            filename='./figure/confmat_train.png'
-        )
-
-        # Evaluate and plot classification results for Test set
         confusion_matrix, confusion_matrix_axis = neuronalreservoir.get_classification_result("test", datagenerator)
-        plot_confusion_matrix(
-            confusion_matrix=confusion_matrix,
-            labels=confusion_matrix_axis,
-            title='Classification Confusion Matrix (Test Data)',
-            filename='./figure/confmat_test.png'
-        )
-        # Save classification numerical results
-        np.savez("./data/classification_results.npz",
-                 confusion_matrix=confusion_matrix,
-                 axis_labels=confusion_matrix_axis)
 
-        # Save the binned reservoir states so the readout can be refitted offline on
-        # any subset of the recording sites without rerunning the simulation.
-        # Columns of the state matrices correspond to neuronalreservoir.record_segs,
-        # described here by their section name and distance from the soma.
-        nrn.distance(0, 0.5, sec=neuronalreservoir.cell.soma[0])
-        np.savez_compressed("./data/reservoir_states.npz",
-                            train_state_vars=neuronalreservoir.train_state_vars,
-                            test_state_vars=neuronalreservoir.test_state_vars,
-                            trainingdata_target=datagenerator.trainingdata_target,
-                            train_label=datagenerator.train_label,
-                            test_label=datagenerator.test_label,
-                            len_data=np.array(datagenerator.len_data),
-                            train_dataset_size=datagenerator.train_dataset_size,
-                            test_dataset_size=datagenerator.test_dataset_size,
-                            bin_width=params['task']['bin_width'],
-                            reg=params['reg'],
-                            record_target=params['record_target'],
-                            seg_names=np.array([seg.sec.name() for seg in neuronalreservoir.record_segs]),
-                            seg_x=np.array([seg.x for seg in neuronalreservoir.record_segs]),
-                            seg_distance=np.array([nrn.distance(seg) for seg in neuronalreservoir.record_segs]))
-        logger.info("Saved reservoir states to ./data/reservoir_states.npz")
+        if output['confusion_matrix']:
+            from NeuronalReservoir_classification import plot_confusion_matrix
+            train_confusion_matrix, train_axis = neuronalreservoir.get_classification_result("training", datagenerator)
+            plot_confusion_matrix(
+                confusion_matrix=train_confusion_matrix,
+                labels=train_axis,
+                title='Classification Confusion Matrix (Training Data)',
+                filename='./figure/confmat_train.png'
+            )
+            plot_confusion_matrix(
+                confusion_matrix=confusion_matrix,
+                labels=confusion_matrix_axis,
+                title='Classification Confusion Matrix (Test Data)',
+                filename='./figure/confmat_test.png'
+            )
+            # Save classification numerical results
+            np.savez("./data/classification_results.npz",
+                     confusion_matrix=confusion_matrix,
+                     axis_labels=confusion_matrix_axis)
+            logger.info("Saved classification results to ./data/classification_results.npz")
 
-        from Analysis import get_firing_rate
-        total_duration_sec = params['task']['pattern_duration_ms'] * (params['task']['num_outputs'] * (params['task']['n_repetition'] + 1)) * 0.001
-        firing_rate = get_firing_rate(neuronalreservoir.spike_timings, total_duration_sec)
-        with open('./data/firing_rate.txt', 'w') as f:
-            f.write(f"{firing_rate}\n")
+        if output['reservoir_states']:
+            # Save the state matrices so the readout can be refitted offline on any
+            # subset of the recording sites without rerunning the simulation. Columns
+            # correspond to neuronalreservoir.record_segs, described here by section
+            # name and distance from the soma, and every requested quantity shares
+            # those columns. With time_integration false these hold the raw
+            # per-timestep samples rather than bins.
+            nrn.distance(0, 0.5, sec=neuronalreservoir.cell.soma[0])
+            states = {}
+            for quantity in quantities:
+                states[f"train_states_{quantity}"] = np.concatenate(collected[quantity]["training"], axis=0)
+                states[f"test_states_{quantity}"] = np.concatenate(collected[quantity]["test"], axis=0)
+
+            np.savez_compressed("./data/reservoir_states.npz",
+                                train_state_vars=neuronalreservoir.train_state_vars,
+                                test_state_vars=neuronalreservoir.test_state_vars,
+                                **states,
+                                quantities=np.array(quantities),
+                                trainingdata_target=datagenerator.trainingdata_target,
+                                train_label=datagenerator.train_label,
+                                test_label=datagenerator.test_label,
+                                len_data=np.array(datagenerator.len_data),
+                                train_dataset_size=datagenerator.train_dataset_size,
+                                test_dataset_size=datagenerator.test_dataset_size,
+                                bin_width=params['task']['bin_width'],
+                                time_integration=params['time_integration'],
+                                reg=params['reg'],
+                                record_target=params['record_target'],
+                                seg_names=np.array([seg.sec.name() for seg in neuronalreservoir.record_segs]),
+                                seg_x=np.array([seg.x for seg in neuronalreservoir.record_segs]),
+                                seg_distance=np.array([nrn.distance(seg) for seg in neuronalreservoir.record_segs]))
+            logger.info(f"Saved reservoir states ({', '.join(quantities)}) to ./data/reservoir_states.npz")
+
+        if output['firing_rate']:
+            from Analysis import get_firing_rate
+            total_duration_sec = params['task']['pattern_duration_ms'] * (params['task']['num_outputs'] * (params['task']['n_repetition'] + 1)) * 0.001
+            firing_rate = get_firing_rate(neuronalreservoir.spike_timings, total_duration_sec)
+            with open('./data/firing_rate.txt', 'w') as f:
+                f.write(f"{firing_rate}\n")
+            logger.info("Saved firing rate to ./data/firing_rate.txt")
 
     elif params['task']['name'] == "sinwave":
         from DataGenerator import sin_datagenerator
@@ -314,8 +354,9 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
             ax.grid(axis='x', alpha=0.2)
 
         plt.tight_layout()
-        plt.savefig("reservoir_flow_analysis.png")
-        plt.show()
+        if params['output']['flow_analysis_figure']:
+            plt.savefig("reservoir_flow_analysis.png")
+        plt.close(fig)
 
         # Final metric validation
         mse_test = mean_squared_error(target_all[len_train:len_train + len_test], output[len_trans + len_train:])

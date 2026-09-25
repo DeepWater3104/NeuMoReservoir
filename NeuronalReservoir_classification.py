@@ -16,7 +16,7 @@ class neuronalreservoir_classification(neuronalreservoir):
         self.prng = prng
         nrn.celsius = 36
 
-        self.save_buffer          = params['task']['save_buffer']
+        self.save_buffer          = params['output']['buffers']
         if self.save_buffer:
             self.batches_to_save_idx   = params['batches_to_save_idx']
             self.batches_to_save_mode  = params['batches_to_save_mode']
@@ -39,7 +39,7 @@ class neuronalreservoir_classification(neuronalreservoir):
 
         logger.info("Initialized neuronalreservoir_classification.")
 
-    def save_to_buffer(self, mode, data_idx, spike_train, datagenerator, save_buffer_IOincluded):
+    def save_to_buffer(self, mode, data_idx, spike_train, datagenerator, io_included):
         logger.debug(f"Saving data to buffer. Mode: {mode}, Index: {data_idx}")
         buffer = {}
         buffer['mode']         = mode
@@ -61,7 +61,7 @@ class neuronalreservoir_classification(neuronalreservoir):
         if mode=="training":
             buffer['TrueLabel']     = datagenerator.train_label[buffer['data_idx']]
             # Calculate indices for slicing state variables corresponding to this batch
-            if save_buffer_IOincluded:
+            if io_included:
                 start_bin_idx           = sum(datagenerator.len_data[:-1])
                 end_bin_idx             = sum(datagenerator.len_data)-1
                 buffer['target']        = datagenerator.trainingdata_target[start_bin_idx:end_bin_idx+1, :]
@@ -71,7 +71,7 @@ class neuronalreservoir_classification(neuronalreservoir):
         elif mode=="test":
             buffer['TrueLabel']     = datagenerator.test_label[buffer['data_idx']]
             # Calculate indices for slicing state variables in test mode
-            if save_buffer_IOincluded:
+            if io_included:
                 start_bin_idx           = sum(datagenerator.len_data[datagenerator.train_dataset_size:-1])
                 end_bin_idx             = sum(datagenerator.len_data[datagenerator.train_dataset_size:])-1
                 buffer['target']        = datagenerator.testdata_target[start_bin_idx:end_bin_idx+1, :]
@@ -82,17 +82,17 @@ class neuronalreservoir_classification(neuronalreservoir):
 
         self.data_buffer.append(buffer)
 
-    def overwrite_buffer_after_optimized(self, datagenerator, save_buffer_IOincluded):
+    def overwrite_buffer_after_optimized(self, datagenerator, io_included):
         logger.info("Overwriting buffer with optimized readout results.")
         for buffer in self.data_buffer:
             if buffer['mode']=="training":
-                if save_buffer_IOincluded:
+                if io_included:
                     start_bin_idx            = sum(datagenerator.len_data[:buffer['data_idx']])
                     end_bin_idx              = sum(datagenerator.len_data[:buffer['data_idx']+1])-1
                     buffer['output']         = self.readout(self.train_state_vars[start_bin_idx:end_bin_idx+1, :])
                 buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "training", datagenerator)
             elif buffer['mode']=="test":
-                if save_buffer_IOincluded:
+                if io_included:
                     start_bin_idx            = sum(datagenerator.len_data[datagenerator.train_dataset_size:datagenerator.train_dataset_size+buffer['data_idx']])
                     end_bin_idx              = sum(datagenerator.len_data[datagenerator.train_dataset_size:datagenerator.train_dataset_size+buffer['data_idx']+1])-1
                     buffer['output']         = self.readout(self.test_state_vars[start_bin_idx:end_bin_idx+1, :])
@@ -134,23 +134,27 @@ class neuronalreservoir_classification(neuronalreservoir):
 
         return confusion_matrix, confusion_matrix_axis
 
-    def save_buffer_single(self, buffer_idx, save_buffer_IOincluded):
+    def save_buffer_single(self, buffer_idx, plot_figure):
+        """
+        Write one buffer and release it.
+
+        plot_timeseries needs the target and output that buffer_io_included puts in
+        the buffer, so a figure can only be drawn when both that and the figure flag
+        are set; the caller resolves this.
+        """
         buffer = self.data_buffer[buffer_idx]
         filename = "./data/buffer" + str(buffer_idx).zfill(2) + ".npz"
         logger.info(f"Saving buffer to {filename}")
         np.savez_compressed(filename, **buffer)
-        filename = "./figure/buffer" + str(buffer_idx).zfill(2) + ".png"
-        if save_buffer_IOincluded:
-            plot_timeseries(self.data_buffer[buffer_idx], filename)
+        if plot_figure:
+            plot_timeseries(buffer, "./figure/buffer" + str(buffer_idx).zfill(2) + ".png")
         self.data_buffer[buffer_idx] = {}
 
-    def save_buffer_all(self, save_buffer_IOincluded):
+    def save_buffer_all(self, plot_figure):
         for buffer_idx, buffer in enumerate(self.data_buffer):
             logger.info(f"Saving buffer No. {buffer_idx}")
-            # Visualize all buffered time-series data
-            filename = "./figure/buffer" + str(buffer_idx).zfill(2) + ".png"
-            if save_buffer_IOincluded:
-                plot_timeseries(self.data_buffer[buffer_idx], filename)
+            if plot_figure:
+                plot_timeseries(buffer, "./figure/buffer" + str(buffer_idx).zfill(2) + ".png")
             filename = "./data/buffer" + str(buffer_idx).zfill(2) + ".npz"
             np.savez_compressed(filename, **buffer)
             self.data_buffer[buffer_idx] = {}

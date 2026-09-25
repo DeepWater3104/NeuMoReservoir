@@ -357,10 +357,29 @@ class neuronalreservoir():
     def generate_dynamics(self, total_duration):
         nrn.continuerun( total_duration * ms)
 
-    def get_binned_states(self, interval_start, num_bins, time_integration):
+    def rec_list_for(self, quantity):
+        """Recordings of one physical quantity, in record_segs order."""
+        if quantity == 'potential':
+            return self.v_rec_list
+        elif quantity == 'calcium':
+            return self.ca_rec_list
+        raise ValueError(f"unknown quantity: {quantity} (expected potential or calcium)")
+
+    def get_binned_states(self, interval_start, num_bins, time_integration, rec_list=None):
+        """
+        Bin one set of recordings over the interval.
+
+        rec_list defaults to the recordings feeding the readout; pass another list
+        (see rec_list_for) to bin a different quantity recorded at the same segments.
+        Note that with time_integration false no binning happens at all — the raw
+        per-timestep samples are returned as they are.
+        """
+        if rec_list is None:
+            rec_list = self.readout_rec_list
+
         if time_integration:
             t_rec = np.array(self.t_rec.to_python())
-            v_rec = np.column_stack([np.array(v.to_python()) for v in self.readout_rec_list])
+            v_rec = np.column_stack([np.array(v.to_python()) for v in rec_list])
             t_start = interval_start
             t_end   = t_rec[-1]
 
@@ -386,8 +405,7 @@ class neuronalreservoir():
             return res / self.bin_width
 
         elif not time_integration:
-            t_rec = np.array(self.t_rec.to_python())
-            v_rec = np.column_stack([np.array(v.to_python()) for v in self.readout_rec_list])
+            v_rec = np.column_stack([np.array(v.to_python()) for v in rec_list])
             return v_rec
 
     def readout(self, state_vars):

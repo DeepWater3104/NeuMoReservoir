@@ -25,6 +25,27 @@ syn_loc_std:  100
 
 cell_name: "cell1/"
 
+# 書き出すものを1箇所で決める。どのフラグもシミュレーションの内容には影響しない
+# （乱数列を動かさない）ので、出力だけを変えて同じダイナミクスを再現できる。
+output:
+  confusion_matrix: true      # figure/confmat_*.png と data/classification_results.npz
+  firing_rate: true           # data/firing_rate.txt
+  flow_analysis_figure: true  # reservoir_flow_analysis.png（sinwave タスクのみ）
+
+  # data/reservoir_states.npz。readout を任意の記録地点部分集合で学習し直すのに使う。
+  # quantities に挙げた物理量それぞれを states_<物理量> として保存する。
+  # time_integration が false のとき、中身はビンではなく各時間ステップの生サンプルになる
+  # （行数が跳ね上がる点に注意）。
+  reservoir_states: true
+  reservoir_states_quantities: ["calcium", "potential"]
+
+  # data/buffer*.npz と figure/buffer*.png。1試行あたり全時間ステップ × 全記録地点 ×
+  # 2物理量の生トレースで、記録地点422点なら1試行約240 MB になる。reservoir_states の
+  # 内容はここから導出できるが、こちらは桁違いに大きいので既定では書き出さない。
+  buffers: false
+  buffer_figures: false       # buffers が true のときだけ効く
+  buffer_io_included: true    # バッファに target / output / 時間軸を含めるか
+
 gcalbar_ratio: null
 gcanbar_ratio: null
 gcatbar_ratio: null
