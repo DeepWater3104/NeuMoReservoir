@@ -172,8 +172,18 @@ class neuronalreservoir():
         self.cell = cell
 
         self.prng = prng
-        self.W = self.prng.random(self.num_states) # readout weight
-        
+
+        # Each consumer draws from its own stream. They used to share prng and draw
+        # in sequence, so the readout weights and the search for recording sites —
+        # both of which consume an amount that depends on num_states — shifted every
+        # later draw, moving the synapse placement and the input spike jitter with
+        # them. Changing num_states then changed the simulation itself rather than
+        # just how much of it was read out. Spawning does not advance prng, so the
+        # data generator holding the same object is unaffected.
+        weight_prng, self._synapse_prng, self._record_prng = prng.spawn(3)
+
+        self.W = weight_prng.random(self.num_states) # readout weight, overwritten by optimize()
+
         self._build_network()
         self._create_records()
 
@@ -228,7 +238,7 @@ class neuronalreservoir():
 
         # 4. Placement of synapses (using excitatory as an example)
         # Randomly select segments based on weights
-        chosen_indices = self.prng.choice(len(all_segs), size=self.exc_num_syn, p=prob)
+        chosen_indices = self._synapse_prng.choice(len(all_segs), size=self.exc_num_syn, p=prob)
 
         self.exc_syn_list = []
         for idx in chosen_indices:
@@ -296,7 +306,7 @@ class neuronalreservoir():
                 break
 
             # Randomly pick a location along the total length
-            rec_loc = total_length * self.prng.random()
+            rec_loc = total_length * self._record_prng.random()
 
             for index, sec in enumerate(secs):
                 if cumulative_length_dict[index]['min'] <= rec_loc and rec_loc < cumulative_length_dict[index]['max']:
