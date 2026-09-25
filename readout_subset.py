@@ -340,7 +340,20 @@ def run_plot(cfg, original_cwd):
         paths = [paths]
 
     os.makedirs(cfg.figure_dir, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(7.0, 4.4))
+
+    # With several runs the two sources of variation can be told apart, and which of
+    # them dominates turns out to depend on the number of sites, so they get a panel
+    # of their own rather than a sentence in the caption.
+    with np.load(paths[0] if os.path.isabs(paths[0]) else os.path.join(original_cwd, paths[0]),
+                 allow_pickle=False) as probe:
+        multi_run = "run" in probe.files and len(set(probe["run"].tolist())) > 1
+
+    if multi_run:
+        fig, (ax, ax_sd) = plt.subplots(2, 1, figsize=(7.0, 6.4), sharex=True,
+                                        gridspec_kw={"height_ratios": [2.2, 1]})
+    else:
+        fig, ax = plt.subplots(figsize=(7.0, 4.4))
+        ax_sd = None
 
     for path in paths:
         resolved = path if os.path.isabs(path) else os.path.join(original_cwd, path)
@@ -384,7 +397,21 @@ def run_plot(cfg, original_cwd):
             ax.plot(sizes, mean, color=color, linewidth=2, linestyle=linestyle,
                     marker="o", markersize=5, zorder=3, label=label)
 
-    ax.set_xlabel("Number of recording sites feeding the readout")
+        if ax_sd is not None:
+            across, within = [], []
+            for size in sizes:
+                at_size = curves["size"] == size
+                per_run = [curves["test_accuracy"][at_size & (runs == r)]
+                           for r in run_ids if (at_size & (runs == r)).any()]
+                across.append(np.array([scores.mean() for scores in per_run]).std())
+                within.append(np.mean([scores.std() for scores in per_run]))
+
+            ax_sd.plot(sizes, across, color=COLOR_TEST, linewidth=2, marker="o",
+                       markersize=5, label="Across simulations")
+            ax_sd.plot(sizes, within, color=COLOR_TEST, linewidth=2, marker="o",
+                       markersize=5, linestyle=":", alpha=0.65,
+                       label="Across subsets, within one simulation")
+
     ax.set_ylabel("Accuracy")
     ax.set_title("Readout accuracy vs. number of recording sites", pad=20)
     ax.text(0.5, 1.03, f"Line: mean   ·   Band: {spread_label}",
@@ -393,6 +420,16 @@ def run_plot(cfg, original_cwd):
     ax.grid(True, axis="y", linestyle=":", alpha=0.4)
     ax.spines[["top", "right"]].set_visible(False)
     ax.legend(frameon=False, loc="lower right")
+
+    if ax_sd is not None:
+        ax_sd.set_ylabel("sd of test accuracy")
+        ax_sd.set_ylim(bottom=0)
+        ax_sd.grid(True, axis="y", linestyle=":", alpha=0.4)
+        ax_sd.spines[["top", "right"]].set_visible(False)
+        ax_sd.legend(frameon=False, loc="upper left", fontsize=9)
+
+    bottom_axis = ax_sd if ax_sd is not None else ax
+    bottom_axis.set_xlabel("Number of recording sites feeding the readout")
 
     fig.tight_layout()
     figure_path = os.path.join(cfg.figure_dir, "readout_subset_accuracy.png")
