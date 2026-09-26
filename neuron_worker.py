@@ -26,24 +26,34 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
     logger = logging.getLogger(__name__)
 
     seed = params.get('seed', 1234)
-    prng = np.random.default_rng(seed)
 
     logger.info(f"Task name: {params['task']['name']}")
-    logger.info(f"Random seed: {seed}")
 
     # A sample_id draws its own (mu, sigma) from a generator keyed on that id alone,
     # so the sweep covers the plane without a grid and stays extensible: adding ids
-    # later leaves every earlier draw where it was. The generator is separate from
-    # prng, so which point is drawn does not disturb the simulation.
+    # later leaves every earlier draw where it was.
     if params.get('sample_id') is not None:
         sample_prng = np.random.default_rng([params['sample_seed'], params['sample_id']])
         mean_low, mean_high = params['syn_loc_mean_range']
         std_low, std_high = params['syn_loc_std_range']
         params['syn_loc_mean'] = float(sample_prng.uniform(mean_low, mean_high))
         params['syn_loc_std'] = float(sample_prng.uniform(std_low, std_high))
+
+        # The simulation is keyed on the id as well. Holding the seed fixed across
+        # the sweep would leave every run drawing the same variates and differing
+        # only in the weights those variates are applied to, so two nearby (mu,
+        # sigma) would place their synapses in nearly the same segments. The
+        # placement would then be a smooth function of (mu, sigma) rather than a
+        # draw from the distribution (mu, sigma) defines, and sparsity could not
+        # vary independently of the parameters it is supposed to mediate.
+        prng = np.random.default_rng([seed, params['sample_id']])
         logger.info(f"sample_id {params['sample_id']}: "
                     f"syn_loc_mean={params['syn_loc_mean']:.2f}, "
-                    f"syn_loc_std={params['syn_loc_std']:.2f}")
+                    f"syn_loc_std={params['syn_loc_std']:.2f}, "
+                    f"seed=[{seed}, {params['sample_id']}]")
+    else:
+        prng = np.random.default_rng(seed)
+        logger.info(f"Random seed: {seed}")
 
     # 1. Compile MOD files (Resolve path dynamically using original_cwd)
     from neuron_simulation import run_nrnivmodl
