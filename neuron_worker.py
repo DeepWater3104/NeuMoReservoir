@@ -7,11 +7,19 @@
 使い捨てにすることで状態の持ち越しを断つ。
 """
 import argparse
+import faulthandler
 import json
 import logging
 import os
 
 import numpy as np
+
+# A worker died with SIGSEGV once in seventy runs, inside the interpreter itself
+# rather than in a library, which says a C extension corrupted state but not where.
+# With this on, the next such death prints the Python stack it happened on, which is
+# the difference between a diagnosable fault and a job that simply vanished. At the
+# scale the next sweep is meant to reach, a fault rate of a percent is many jobs.
+faulthandler.enable()
 
 
 def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
