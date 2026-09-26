@@ -39,7 +39,22 @@ class neuronalreservoir_classification(neuronalreservoir):
 
         logger.info("Initialized neuronalreservoir_classification.")
 
-    def save_to_buffer(self, mode, data_idx, spike_train, datagenerator, io_included):
+    def classify_chunk(self, state_chunk):
+        """
+        Label one trial from its own states, without the whole set being in memory.
+
+        classify() slices the concatenated matrix for a trial, which means holding
+        every trial at once; with full traces that is several GB and it decides how
+        many jobs fit on a machine. A test trial can be scored as soon as it has been
+        simulated, since the readout is already fitted by then.
+        """
+        output = np.asarray(state_chunk, dtype=np.float64) @ self.W
+        winners = np.argmax(output, axis=1)
+        labels, counts = np.unique(winners, return_counts=True)
+        return labels[np.argmax(counts)]
+
+    def save_to_buffer(self, mode, data_idx, spike_train, datagenerator, io_included,
+                       predicted_label=None):
         logger.debug(f"Saving data to buffer. Mode: {mode}, Index: {data_idx}")
         buffer = {}
         buffer['mode']         = mode
@@ -48,9 +63,9 @@ class neuronalreservoir_classification(neuronalreservoir):
         # variables[0]: the quantity used for readout, variables[1]: the companion
         # quantity, both recorded at the same segments in the same order
         buffer['variables']    = []
-        v_rec_np = np.stack([v_rec.to_python() for v_rec in self.readout_rec_list], axis=1)
+        v_rec_np = np.stack([v_rec.to_python() for v_rec in self.readout_rec_list], axis=1).astype(np.float32)
         buffer['variables'].append(v_rec_np)
-        v_rec_np = np.stack([v_rec.to_python() for v_rec in self.companion_rec_list], axis=1)
+        v_rec_np = np.stack([v_rec.to_python() for v_rec in self.companion_rec_list], axis=1).astype(np.float32)
         buffer['variables'].append(v_rec_np)
         buffer['t_rec']        = np.array(self.t_rec.to_python())
     
@@ -77,7 +92,8 @@ class neuronalreservoir_classification(neuronalreservoir):
                 buffer['target']        = datagenerator.testdata_target[start_bin_idx:end_bin_idx+1, :]
                 buffer['output']        = self.readout(self.test_state_vars[start_bin_idx:end_bin_idx+1, :])
                 buffer['time_output']   = np.arange(start_bin_idx, end_bin_idx+1) * self.bin_width + sum(datagenerator.len_data[:datagenerator.train_dataset_size]) * self.bin_width
-            buffer['PredictedLabel'] = self.classify(buffer['data_idx'], "test", datagenerator)
+            buffer['PredictedLabel'] = (self.classify(buffer['data_idx'], "test", datagenerator)
+                                        if predicted_label is None else predicted_label)
 
 
         self.data_buffer.append(buffer)

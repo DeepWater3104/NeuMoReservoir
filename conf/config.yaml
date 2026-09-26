@@ -42,17 +42,15 @@ output:
   firing_rate: true           # data/firing_rate.txt
   flow_analysis_figure: true  # reservoir_flow_analysis.png（sinwave タスクのみ）
 
-  # data/reservoir_states.npz。readout を任意の記録地点部分集合で学習し直すのに使う。
-  # quantities に挙げた物理量それぞれを states_<物理量> として保存する。
-  # time_integration が false のとき、中身はビンではなく各時間ステップの生サンプルになる
-  # （行数が跳ね上がる点に注意）。
-  reservoir_states: true
-  reservoir_states_quantities: ["calcium", "potential"]
+  # data/run_info.npz。トレース以外の全て——シナプスと記録地点の位置、ラベル、
+  # 試行長、実行の来歴。1 MB未満なので、スイープを走査するときはこれだけ読めばよい。
+  run_info: true
 
-  # data/buffer*.npz と figure/buffer*.png。1試行あたり全時間ステップ × 全記録地点 ×
-  # 2物理量の生トレースで、記録地点422点なら1試行約240 MB になる。reservoir_states の
-  # 内容はここから導出できるが、こちらは桁違いに大きいので既定では書き出さない。
-  buffers: false
+  # data/buffer*.npz と figure/buffer*.png。試行ごとに1ファイル、各ファイルが
+  # variables[0]（readout に使う物理量）と variables[1]（もう一方）を持つ。
+  # 既存の解析はこの形式を前提にしている（sorted(glob("buffer*.npz"))）。
+  # 試行ごとに書き出して解放するので、1ジョブが抱えるメモリが試行1本分で済む。
+  buffers: true
   buffer_figures: false       # buffers が true のときだけ効く
   buffer_io_included: true    # バッファに target / output / 時間軸を含めるか
 

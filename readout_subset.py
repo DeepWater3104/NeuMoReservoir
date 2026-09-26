@@ -39,7 +39,8 @@ from omegaconf import DictConfig, OmegaConf
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
-STATES_FILENAME = os.path.join("data", "reservoir_states.npz")
+BUFFER_GLOB = os.path.join("data", "buffer*.npz")
+RUN_INFO_FILENAME = os.path.join("data", "run_info.npz")
 RESULTS_FILENAME = os.path.join("data", "classification_results.npz")
 
 # Categorical slots 1 and 2 of the reference palette, light mode.
@@ -47,41 +48,58 @@ COLOR_TEST = "#2a78d6"
 COLOR_TRAIN = "#eb6834"
 
 
-def load_states(run_dir):
-    """Read the state matrices a main.py run saved, plus its reference accuracy.
+def load_run(run_dir):
+    """Assemble one run from its per-trial files.
 
-    The reference accuracy is recovered from the run's confusion matrix when it is
-    present. It is what the simulation itself reported using every recording site,
-    so reproducing it from the state matrices confirms that the refit here agrees
-    with the pipeline it is standing in for.
+    A run is written as one file per trial — the format the rest of the analyses
+    read — so the states are gathered here rather than found as one matrix.
+    variables[0] is the quantity the readout was fitted on and variables[1] its
+    companion at the same segments.
     """
-    states_path = os.path.join(run_dir, STATES_FILENAME)
-    if not os.path.exists(states_path):
+    info_path = os.path.join(run_dir, RUN_INFO_FILENAME)
+    if not os.path.exists(info_path):
         raise FileNotFoundError(
-            f"{states_path} not found. Only runs made after reservoir_states.npz "
-            f"was introduced carry the state matrices needed here."
-        )
+            f"{info_path} not found. Only runs made after run_info.npz was "
+            f"introduced carry the labels and positions needed here.")
+    with np.load(info_path, allow_pickle=False) as npz:
+        info = {key: npz[key] for key in npz.files}
 
-    with np.load(states_path, allow_pickle=False) as npz:
-        data = {key: npz[key] for key in npz.files}
-    logger.info(f"Loaded {states_path}")
+    train, test = [], []
+    for path in sorted(glob.glob(os.path.join(run_dir, BUFFER_GLOB))):
+        with np.load(path, allow_pickle=True) as npz:
+            (train if str(npz["mode"]) == "training" else test).append(npz["variables"][0])
 
-    # The readout was fitted on whichever quantity record_target names. Older files
-    # carried that copy separately; it is now read from the per-quantity matrices.
-    if "train_state_vars" not in data:
-        quantity = {"potential": "potential",
-                    "calcium_acum": "calcium"}[str(data["record_target"])]
-        data["train_state_vars"] = data[f"train_states_{quantity}"]
-        data["test_state_vars"] = data[f"test_states_{quantity}"]
+    expected = (int(info["train_dataset_size"]), int(info["test_dataset_size"]))
+    if (len(train), len(test)) != expected:
+        raise ValueError(
+            f"{run_dir} holds {len(train)} training and {len(test)} test trials but "
+            f"run_info says {expected[0]} and {expected[1]}")
+
+    data = dict(info)
+    data["train_state_vars"] = np.concatenate(train, axis=0)
+    data["test_state_vars"] = np.concatenate(test, axis=0)
+    data["trial_rows"] = np.array([chunk.shape[0] for chunk in train + test])
+    logger.info(f"Loaded {run_dir}: {len(train)}+{len(test)} trials, "
+                f"{data['train_state_vars'].shape[1]} sites")
+
+    # The readout's target is not stored per trial; it is rebuilt from the labels,
+    # one-hot over the rows of each training trial, which is how the pipeline builds
+    # it before fitting.
+    num_classes = int(np.max(info["train_label"])) + 1
+    target_rows = []
+    for label, chunk in zip(info["train_label"], train):
+        one_hot = np.zeros((chunk.shape[0], num_classes))
+        one_hot[:, int(label)] = 1.0
+        target_rows.append(one_hot)
+    data["trainingdata_target"] = np.concatenate(target_rows, axis=0)
 
     reference_accuracy = None
     results_path = os.path.join(run_dir, RESULTS_FILENAME)
     if os.path.exists(results_path):
         with np.load(results_path, allow_pickle=False) as npz:
             confusion_matrix = npz["confusion_matrix"]
-        total = confusion_matrix.sum()
-        if total > 0:
-            reference_accuracy = float(np.trace(confusion_matrix) / total)
+        if confusion_matrix.sum() > 0:
+            reference_accuracy = float(np.trace(confusion_matrix) / confusion_matrix.sum())
             logger.info(f"Run reported test accuracy {reference_accuracy:.4f} (all sites)")
 
     return data, reference_accuracy
@@ -152,10 +170,8 @@ def sweep_subset_sizes(data, subset_sizes, num_draws, seed, reg):
     num_sites = data["train_state_vars"].shape[1]
     train_size = int(data["train_dataset_size"])
     test_size = int(data["test_dataset_size"])
-    bin_counts = data["len_data"]
-
-    train_slices = trial_slices(bin_counts[:train_size])
-    test_slices = trial_slices(bin_counts[train_size:train_size + test_size])
+    train_slices = trial_slices(data["trial_rows"][:train_size])
+    test_slices = trial_slices(data["trial_rows"][train_size:train_size + test_size])
 
     # The trial boundaries come from len_data while the rows come from the
     # concatenated per-trial states. If the two disagree the accuracies would still
@@ -256,10 +272,10 @@ def resolve_run_dirs(run_dir, original_cwd):
             pattern = os.path.join(original_cwd, pattern)
         matches = sorted(glob.glob(pattern)) if glob.has_magic(pattern) else [pattern]
         resolved.extend(match for match in matches
-                        if os.path.exists(os.path.join(match, STATES_FILENAME)))
+                        if os.path.exists(os.path.join(match, RUN_INFO_FILENAME)))
 
     if not resolved:
-        raise FileNotFoundError(f"No run directory holding {STATES_FILENAME} matched {patterns}")
+        raise FileNotFoundError(f"No run directory holding {RUN_INFO_FILENAME} matched {patterns}")
     return resolved
 
 
@@ -269,7 +285,7 @@ def run_compute(cfg, original_cwd):
 
     per_run, summaries = [], []
     for run_index, run_dir in enumerate(run_dirs):
-        data, reference_accuracy = load_states(run_dir)
+        data, reference_accuracy = load_run(run_dir)
         reg = float(data["reg"]) if cfg.reg is None else float(cfg.reg)
 
         curves = sweep_subset_sizes(data, cfg.subset_sizes, int(cfg.num_draws),

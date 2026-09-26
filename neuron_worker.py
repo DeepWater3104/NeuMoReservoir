@@ -114,40 +114,16 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
         neuronalreservoir = neuronalreservoir_classification(cell, prng, params)
         nrn.finitialize(-65 * mV)
 
-        # Every requested quantity is recorded at the same segments and over the same
-        # intervals as the readout, so a later analysis can relate the dynamics at a
-        # site to what the readout made of it.
-        #
-        # These matrices are what the job holds in memory, and with time_integration
-        # false they are the full traces: at 422 sites and 60 trials, float64 copies
-        # of two quantities plus a separate readout copy came to roughly 20 GB, which
-        # capped the machine at three concurrent jobs regardless of its 24 cores. So
-        # they are accumulated once, as float32, in per-trial chunks — no repeated
-        # concatenate, and the readout reuses the chunk of the quantity it is fitted
-        # on rather than keeping a second copy. The fit itself still runs in float64.
+        # Per-trial files are the output format the existing analyses read
+        # (sorted data/buffer*.npz, variables[0] the readout quantity and
+        # variables[1] the companion), and they are also what keeps a job small:
+        # each trial is written and released instead of being held to the end. Only
+        # the training states are kept, because fitting the readout needs them all
+        # at once; test trials are scored as they finish and discarded.
         QUANTITY_OF_TARGET = {'potential': 'potential', 'calcium_acum': 'calcium'}
         readout_quantity = QUANTITY_OF_TARGET[params['record_target']]
-
-        quantities = list(output['reservoir_states_quantities']) if output['reservoir_states'] else []
-        collected = {q: {"training": [], "test": []} for q in quantities}
-        readout_chunks = {"training": [], "test": []}
-
-        def collect_states(mode, interval_start, num_bins):
-            """Record every requested quantity for this trial, and return the readout's."""
-            chunks = {}
-            for quantity in quantities:
-                chunks[quantity] = neuronalreservoir.get_binned_states(
-                    interval_start, num_bins, params['time_integration'],
-                    rec_list=neuronalreservoir.rec_list_for(quantity)).astype(np.float32)
-                collected[quantity][mode].append(chunks[quantity])
-
-            if readout_quantity in chunks:
-                readout = chunks[readout_quantity]
-            else:
-                readout = neuronalreservoir.get_binned_states(
-                    interval_start, num_bins, params['time_integration']).astype(np.float32)
-            readout_chunks[mode].append(readout)
-            return readout
+        train_chunks = []
+        test_predictions = []
 
         logger.info("--- Start Training Data Simulation ---")
 
@@ -169,13 +145,13 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
             neuronalreservoir.resister_spike_events(spike_trains)
             current_time += datagenerator.pattern_duration_ms
             neuronalreservoir.generate_dynamics(current_time)
-            collect_states("training", interval_start, num_bins)
+            train_chunks.append(neuronalreservoir.get_binned_states(
+                interval_start, num_bins, params['time_integration']).astype(np.float32))
 
-            # save_to_buffer reads train_state_vars for the trial just finished, so it
-            # needs the matrix assembled now; otherwise assembling once after the loop
-            # avoids holding a growing second copy.
+            # save_to_buffer reads train_state_vars for the trial just finished, so
+            # the matrix has to be assembled by then.
             if save_buffer:
-                neuronalreservoir.train_state_vars = np.concatenate(readout_chunks["training"], axis=0)
+                neuronalreservoir.train_state_vars = np.concatenate(train_chunks, axis=0)
                 if (data_idx, "training") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
                     neuronalreservoir.save_to_buffer("training", data_idx, spike_trains, datagenerator, output['buffer_io_included'])
 
@@ -188,7 +164,8 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
 
         logger.info("--- End Training Data Simulation ---")
 
-        neuronalreservoir.train_state_vars = np.concatenate(readout_chunks["training"], axis=0)
+        neuronalreservoir.train_state_vars = np.concatenate(train_chunks, axis=0)
+        train_chunks.clear()
 
         # Train the readout weights based on simulated reservoir states
         neuronalreservoir.optimize(neuronalreservoir.train_state_vars, datagenerator.trainingdata_target)
@@ -212,16 +189,19 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
             neuronalreservoir.resister_spike_events(spike_trains)
             current_time += datagenerator.pattern_duration_ms
             neuronalreservoir.generate_dynamics(current_time)
-            collect_states("test", interval_start, num_bins)
-
-            if save_buffer:
-                neuronalreservoir.test_state_vars = np.concatenate(readout_chunks["test"], axis=0)
+            # Scored now, from this trial alone, so the states need not be retained.
+            chunk = neuronalreservoir.get_binned_states(
+                interval_start, num_bins, params['time_integration']).astype(np.float32)
+            test_predictions.append(neuronalreservoir.classify_chunk(chunk))
 
             # Save test batch to buffer if index matches
             if save_buffer:
                 if (data_idx, "test") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
-                    neuronalreservoir.save_to_buffer("test", data_idx, spike_trains, datagenerator, output['buffer_io_included'])
+                    neuronalreservoir.save_to_buffer("test", data_idx, spike_trains, datagenerator,
+                                                     output['buffer_io_included'],
+                                                     predicted_label=test_predictions[-1])
                     neuronalreservoir.save_buffer_single(len(neuronalreservoir.data_buffer) - 1, plot_buffer_figures)
+            del chunk
 
             v_rec_array = np.array(neuronalreservoir.Vm_at_soma)
             t_rec_array = np.array(neuronalreservoir.t_rec.to_python())
@@ -231,11 +211,16 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
 
         logger.info("--- End Test Data Simulation ---")
 
-        neuronalreservoir.test_state_vars = np.concatenate(readout_chunks["test"], axis=0)
+
 
         logger.info("--- Start Saving Data and Images ---")
 
-        confusion_matrix, confusion_matrix_axis = neuronalreservoir.get_classification_result("test", datagenerator)
+        # Built from the labels assigned as each test trial finished, since the test
+        # states are no longer retained to be re-scored in bulk.
+        confusion_matrix_axis = np.unique(datagenerator.test_label)
+        confusion_matrix = np.zeros((confusion_matrix_axis.size, confusion_matrix_axis.size))
+        for predicted, truth in zip(test_predictions, datagenerator.test_label):
+            confusion_matrix[int(predicted), int(truth)] += 1
 
         if output['confusion_matrix']:
             from NeuronalReservoir_classification import plot_confusion_matrix
@@ -258,41 +243,29 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
                      axis_labels=confusion_matrix_axis)
             logger.info("Saved classification results to ./data/classification_results.npz")
 
-        if output['reservoir_states']:
-            # Save the state matrices so the readout can be refitted offline on any
-            # subset of the recording sites without rerunning the simulation. Columns
-            # correspond to neuronalreservoir.record_segs, described here by section
-            # name and distance from the soma, and every requested quantity shares
-            # those columns. With time_integration false these hold the raw
-            # per-timestep samples rather than bins.
+        if output['run_info']:
+            # Everything about the run that is not a trace: where the synapses and the
+            # recording sites are, the labels and trial lengths needed to score the
+            # per-trial files, and the provenance of the run. Small enough to read on
+            # its own when scanning a sweep.
+            #
+            # Synapse positions in particular existed only in memory until now, so no
+            # earlier run can yield the intra/inter-branch sparsity that the chain
+            # from placement to accuracy rests on.
             nrn.distance(0, 0.5, sec=neuronalreservoir.cell.soma[0])
-
-            # float32 throughout: these matrices dominate the run's output, the extra
-            # digits of a float64 trace are below anything the model resolves, and the
-            # readout refits identically at single precision. The quantity named by
-            # record_target is the one the readout was fitted on, so it is stored once
-            # under its own name rather than again as a separate readout copy.
-            states = {}
-            for quantity in quantities:
-                states[f"train_states_{quantity}"] = np.concatenate(collected[quantity]["training"], axis=0)
-                states[f"test_states_{quantity}"] = np.concatenate(collected[quantity]["test"], axis=0)
-
-            # Synapse positions are what intra/inter-branch sparsity is computed from.
-            # They existed only in memory until now, so no earlier run can yield it.
             exc_segs = [syn.get_segment() for syn in neuronalreservoir.exc_syn_list]
 
-            np.savez("./data/reservoir_states.npz",
-                     **states,
-                     quantities=np.array(quantities),
-                     trainingdata_target=datagenerator.trainingdata_target.astype(np.float32),
+            np.savez("./data/run_info.npz",
                      train_label=datagenerator.train_label,
                      test_label=datagenerator.test_label,
+                     test_predicted_label=np.array(test_predictions),
                      len_data=np.array(datagenerator.len_data),
                      train_dataset_size=datagenerator.train_dataset_size,
                      test_dataset_size=datagenerator.test_dataset_size,
                      bin_width=params['task']['bin_width'],
                      time_integration=params['time_integration'],
                      reg=params['reg'],
+                     num_states=params['num_states'],
                      record_target=params['record_target'],
                      syn_loc_condition=params['syn_loc_condition'],
                      syn_loc_mean=params['syn_loc_mean'],
@@ -305,7 +278,7 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
                      syn_names=np.array([seg.sec.name() for seg in exc_segs]),
                      syn_x=np.array([seg.x for seg in exc_segs]),
                      syn_distance=np.array([nrn.distance(seg) for seg in exc_segs]))
-            logger.info(f"Saved reservoir states ({', '.join(quantities)}) to ./data/reservoir_states.npz")
+            logger.info("Saved run metadata to ./data/run_info.npz")
 
         if output['firing_rate']:
             from Analysis import get_firing_rate
