@@ -104,9 +104,13 @@ def fit_readout(state_vars, target, reg):
     The identity is sized to the number of columns actually supplied rather than
     to num_states, which is what makes the fit valid for a subset of the sites.
     """
+    # Solved in float64 even when the states are stored as float32: the Gram matrix
+    # squares the data, and at this regularisation a single-precision solve would be
+    # dominated by rounding.
+    state_vars = np.asarray(state_vars, dtype=np.float64)
     num_features = state_vars.shape[1]
     gram = state_vars.T @ state_vars + reg * np.eye(num_features)
-    return np.linalg.inv(gram) @ state_vars.T @ target
+    return np.linalg.inv(gram) @ state_vars.T @ np.asarray(target, dtype=np.float64)
 
 
 def classify(state_vars, weights, slices):

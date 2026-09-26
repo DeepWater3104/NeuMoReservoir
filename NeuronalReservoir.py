@@ -409,5 +409,13 @@ class neuronalreservoir():
         return state_vars @ self.W
 
     def optimize(self, state_vars, target):
+        """
+        Ridge-fit the readout weights.
+
+        The states are held as float32 to keep a run's memory within reach, but the
+        normal equations are solved in float64: the Gram matrix squares the data, and
+        at reg=1e-7 a single-precision solve would be dominated by rounding.
+        """
         logger.info("Optimizing readout weights...")
+        state_vars = np.asarray(state_vars, dtype=np.float64)
         self.W = np.linalg.inv(np.transpose(state_vars) @ state_vars + self.reg*np.eye(self.num_states)) @ np.transpose(state_vars) @ target

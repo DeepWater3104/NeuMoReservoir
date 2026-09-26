@@ -114,19 +114,40 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
         neuronalreservoir = neuronalreservoir_classification(cell, prng, params)
         nrn.finitialize(-65 * mV)
 
-        # Every requested quantity is binned at the same segments and over the same
+        # Every requested quantity is recorded at the same segments and over the same
         # intervals as the readout, so a later analysis can relate the dynamics at a
-        # site to what the readout made of it. The readout itself is always fitted on
-        # train_state_vars, whichever quantity record_target selects.
+        # site to what the readout made of it.
+        #
+        # These matrices are what the job holds in memory, and with time_integration
+        # false they are the full traces: at 422 sites and 60 trials, float64 copies
+        # of two quantities plus a separate readout copy came to roughly 20 GB, which
+        # capped the machine at three concurrent jobs regardless of its 24 cores. So
+        # they are accumulated once, as float32, in per-trial chunks — no repeated
+        # concatenate, and the readout reuses the chunk of the quantity it is fitted
+        # on rather than keeping a second copy. The fit itself still runs in float64.
+        QUANTITY_OF_TARGET = {'potential': 'potential', 'calcium_acum': 'calcium'}
+        readout_quantity = QUANTITY_OF_TARGET[params['record_target']]
+
         quantities = list(output['reservoir_states_quantities']) if output['reservoir_states'] else []
         collected = {q: {"training": [], "test": []} for q in quantities}
+        readout_chunks = {"training": [], "test": []}
 
         def collect_states(mode, interval_start, num_bins):
+            """Record every requested quantity for this trial, and return the readout's."""
+            chunks = {}
             for quantity in quantities:
-                collected[quantity][mode].append(
-                    neuronalreservoir.get_binned_states(
-                        interval_start, num_bins, params['time_integration'],
-                        rec_list=neuronalreservoir.rec_list_for(quantity)))
+                chunks[quantity] = neuronalreservoir.get_binned_states(
+                    interval_start, num_bins, params['time_integration'],
+                    rec_list=neuronalreservoir.rec_list_for(quantity)).astype(np.float32)
+                collected[quantity][mode].append(chunks[quantity])
+
+            if readout_quantity in chunks:
+                readout = chunks[readout_quantity]
+            else:
+                readout = neuronalreservoir.get_binned_states(
+                    interval_start, num_bins, params['time_integration']).astype(np.float32)
+            readout_chunks[mode].append(readout)
+            return readout
 
         logger.info("--- Start Training Data Simulation ---")
 
@@ -148,15 +169,13 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
             neuronalreservoir.resister_spike_events(spike_trains)
             current_time += datagenerator.pattern_duration_ms
             neuronalreservoir.generate_dynamics(current_time)
-            state_vars = neuronalreservoir.get_binned_states(interval_start, num_bins, params['time_integration'])
-
-            # Store binned states for later optimization (readout training)
-            shape_before_concatenate = np.shape(neuronalreservoir.train_state_vars)
-            neuronalreservoir.train_state_vars = np.concatenate([neuronalreservoir.train_state_vars, state_vars], axis=0)
             collect_states("training", interval_start, num_bins)
 
-            # Save raw simulation data to buffer if index matches selected batches
+            # save_to_buffer reads train_state_vars for the trial just finished, so it
+            # needs the matrix assembled now; otherwise assembling once after the loop
+            # avoids holding a growing second copy.
             if save_buffer:
+                neuronalreservoir.train_state_vars = np.concatenate(readout_chunks["training"], axis=0)
                 if (data_idx, "training") in zip(neuronalreservoir.batches_to_save_idx, neuronalreservoir.batches_to_save_mode):
                     neuronalreservoir.save_to_buffer("training", data_idx, spike_trains, datagenerator, output['buffer_io_included'])
 
@@ -168,6 +187,8 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
             nrn.frecord_init()
 
         logger.info("--- End Training Data Simulation ---")
+
+        neuronalreservoir.train_state_vars = np.concatenate(readout_chunks["training"], axis=0)
 
         # Train the readout weights based on simulated reservoir states
         neuronalreservoir.optimize(neuronalreservoir.train_state_vars, datagenerator.trainingdata_target)
@@ -191,10 +212,10 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
             neuronalreservoir.resister_spike_events(spike_trains)
             current_time += datagenerator.pattern_duration_ms
             neuronalreservoir.generate_dynamics(current_time)
-            state_vars = neuronalreservoir.get_binned_states(interval_start, num_bins, params['time_integration'])
-
-            neuronalreservoir.test_state_vars = np.concatenate([neuronalreservoir.test_state_vars, state_vars], axis=0)
             collect_states("test", interval_start, num_bins)
+
+            if save_buffer:
+                neuronalreservoir.test_state_vars = np.concatenate(readout_chunks["test"], axis=0)
 
             # Save test batch to buffer if index matches
             if save_buffer:
@@ -209,6 +230,8 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
             nrn.frecord_init()
 
         logger.info("--- End Test Data Simulation ---")
+
+        neuronalreservoir.test_state_vars = np.concatenate(readout_chunks["test"], axis=0)
 
         logger.info("--- Start Saving Data and Images ---")
 
@@ -251,10 +274,8 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
             # under its own name rather than again as a separate readout copy.
             states = {}
             for quantity in quantities:
-                states[f"train_states_{quantity}"] = np.concatenate(
-                    collected[quantity]["training"], axis=0).astype(np.float32)
-                states[f"test_states_{quantity}"] = np.concatenate(
-                    collected[quantity]["test"], axis=0).astype(np.float32)
+                states[f"train_states_{quantity}"] = np.concatenate(collected[quantity]["training"], axis=0)
+                states[f"test_states_{quantity}"] = np.concatenate(collected[quantity]["test"], axis=0)
 
             # Synapse positions are what intra/inter-branch sparsity is computed from.
             # They existed only in memory until now, so no earlier run can yield it.
