@@ -23,6 +23,16 @@ syn_loc_condition: "gaussian" # uniform or gaussian or gaussian-apical or gaussi
 syn_loc_mean: 600
 syn_loc_std:  100
 
+# (μ,σ) をグリッドではなくランダムに振るための仕組み。sample_id に整数を渡すと、
+# その id だけから決まる (syn_loc_mean, syn_loc_std) が下の範囲から一様に引かれ、
+# 上の既定値を上書きする。multirun で sample_id=range(0,80) のように振る。
+# id ごとに独立な乱数列を使うので、後から id を足すだけでサンプルを増やせる
+# （既存の id の引き値は変わらない）。null なら上の固定値をそのまま使う。
+sample_id: null
+sample_seed: 20260926
+syn_loc_mean_range: [0, 700]
+syn_loc_std_range: [25, 500]
+
 cell_name: "cell1/"
 
 # 書き出すものを1箇所で決める。どのフラグもシミュレーションの内容には影響しない

@@ -23,6 +23,20 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
     logger.info(f"Task name: {params['task']['name']}")
     logger.info(f"Random seed: {seed}")
 
+    # A sample_id draws its own (mu, sigma) from a generator keyed on that id alone,
+    # so the sweep covers the plane without a grid and stays extensible: adding ids
+    # later leaves every earlier draw where it was. The generator is separate from
+    # prng, so which point is drawn does not disturb the simulation.
+    if params.get('sample_id') is not None:
+        sample_prng = np.random.default_rng([params['sample_seed'], params['sample_id']])
+        mean_low, mean_high = params['syn_loc_mean_range']
+        std_low, std_high = params['syn_loc_std_range']
+        params['syn_loc_mean'] = float(sample_prng.uniform(mean_low, mean_high))
+        params['syn_loc_std'] = float(sample_prng.uniform(std_low, std_high))
+        logger.info(f"sample_id {params['sample_id']}: "
+                    f"syn_loc_mean={params['syn_loc_mean']:.2f}, "
+                    f"syn_loc_std={params['syn_loc_std']:.2f}")
+
     # 1. Compile MOD files (Resolve path dynamically using original_cwd)
     from neuron_simulation import run_nrnivmodl
     cell_dir = os.path.join(original_cwd, "cells", str(params['cell_name']))
@@ -229,29 +243,47 @@ def run(params: dict, original_cwd: str, is_multirun: bool) -> None:
             # those columns. With time_integration false these hold the raw
             # per-timestep samples rather than bins.
             nrn.distance(0, 0.5, sec=neuronalreservoir.cell.soma[0])
+
+            # float32 throughout: these matrices dominate the run's output, the extra
+            # digits of a float64 trace are below anything the model resolves, and the
+            # readout refits identically at single precision. The quantity named by
+            # record_target is the one the readout was fitted on, so it is stored once
+            # under its own name rather than again as a separate readout copy.
             states = {}
             for quantity in quantities:
-                states[f"train_states_{quantity}"] = np.concatenate(collected[quantity]["training"], axis=0)
-                states[f"test_states_{quantity}"] = np.concatenate(collected[quantity]["test"], axis=0)
+                states[f"train_states_{quantity}"] = np.concatenate(
+                    collected[quantity]["training"], axis=0).astype(np.float32)
+                states[f"test_states_{quantity}"] = np.concatenate(
+                    collected[quantity]["test"], axis=0).astype(np.float32)
 
-            np.savez_compressed("./data/reservoir_states.npz",
-                                train_state_vars=neuronalreservoir.train_state_vars,
-                                test_state_vars=neuronalreservoir.test_state_vars,
-                                **states,
-                                quantities=np.array(quantities),
-                                trainingdata_target=datagenerator.trainingdata_target,
-                                train_label=datagenerator.train_label,
-                                test_label=datagenerator.test_label,
-                                len_data=np.array(datagenerator.len_data),
-                                train_dataset_size=datagenerator.train_dataset_size,
-                                test_dataset_size=datagenerator.test_dataset_size,
-                                bin_width=params['task']['bin_width'],
-                                time_integration=params['time_integration'],
-                                reg=params['reg'],
-                                record_target=params['record_target'],
-                                seg_names=np.array([seg.sec.name() for seg in neuronalreservoir.record_segs]),
-                                seg_x=np.array([seg.x for seg in neuronalreservoir.record_segs]),
-                                seg_distance=np.array([nrn.distance(seg) for seg in neuronalreservoir.record_segs]))
+            # Synapse positions are what intra/inter-branch sparsity is computed from.
+            # They existed only in memory until now, so no earlier run can yield it.
+            exc_segs = [syn.get_segment() for syn in neuronalreservoir.exc_syn_list]
+
+            np.savez("./data/reservoir_states.npz",
+                     **states,
+                     quantities=np.array(quantities),
+                     trainingdata_target=datagenerator.trainingdata_target.astype(np.float32),
+                     train_label=datagenerator.train_label,
+                     test_label=datagenerator.test_label,
+                     len_data=np.array(datagenerator.len_data),
+                     train_dataset_size=datagenerator.train_dataset_size,
+                     test_dataset_size=datagenerator.test_dataset_size,
+                     bin_width=params['task']['bin_width'],
+                     time_integration=params['time_integration'],
+                     reg=params['reg'],
+                     record_target=params['record_target'],
+                     syn_loc_condition=params['syn_loc_condition'],
+                     syn_loc_mean=params['syn_loc_mean'],
+                     syn_loc_std=params['syn_loc_std'],
+                     sample_id=(-1 if params.get('sample_id') is None else params['sample_id']),
+                     seed=seed,
+                     seg_names=np.array([seg.sec.name() for seg in neuronalreservoir.record_segs]),
+                     seg_x=np.array([seg.x for seg in neuronalreservoir.record_segs]),
+                     seg_distance=np.array([nrn.distance(seg) for seg in neuronalreservoir.record_segs]),
+                     syn_names=np.array([seg.sec.name() for seg in exc_segs]),
+                     syn_x=np.array([seg.x for seg in exc_segs]),
+                     syn_distance=np.array([nrn.distance(seg) for seg in exc_segs]))
             logger.info(f"Saved reservoir states ({', '.join(quantities)}) to ./data/reservoir_states.npz")
 
         if output['firing_rate']:

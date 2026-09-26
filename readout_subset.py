@@ -66,6 +66,14 @@ def load_states(run_dir):
         data = {key: npz[key] for key in npz.files}
     logger.info(f"Loaded {states_path}")
 
+    # The readout was fitted on whichever quantity record_target names. Older files
+    # carried that copy separately; it is now read from the per-quantity matrices.
+    if "train_state_vars" not in data:
+        quantity = {"potential": "potential",
+                    "calcium_acum": "calcium"}[str(data["record_target"])]
+        data["train_state_vars"] = data[f"train_states_{quantity}"]
+        data["test_state_vars"] = data[f"test_states_{quantity}"]
+
     reference_accuracy = None
     results_path = os.path.join(run_dir, RESULTS_FILENAME)
     if os.path.exists(results_path):
