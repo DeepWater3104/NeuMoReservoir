@@ -1,0 +1,12 @@
+# Configuration for sparsity.py
+# シナプス配置だけから intra / inter-branch sparsity を算出する。
+defaults:
+  - _self_
+hydra:
+  job:
+    chdir: True
+
+# 対象のランのディレクトリ。グロブ可。相対パスは元の作業ディレクトリから解決する。
+run_dir: null
+
+data_dir: "data"
