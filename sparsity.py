@@ -179,23 +179,37 @@ def run_plot(cfg, original_cwd):
     accuracy = np.array([r["test_accuracy"] for r in rows])
 
     # One hue, light to dark, with the palest quarter cut so no point vanishes.
+    # Each panel of (2) is drawn against the parameter that explains its measure —
+    # sigma sets how far apart in depth the synapses fall, mu sets which part of
+    # the tree they land on and so how finely it has branched there — and coloured
+    # by the other, so what the pair of parameters leaves unexplained is visible
+    # as scatter that the colour does not organise.
     cmap = plt.get_cmap("Blues")
-    colours = cmap(0.25 + 0.75 * (mu - mu.min()) / max(1e-9, mu.max() - mu.min()))
+
+    def shade(values):
+        return cmap(0.25 + 0.75 * (values - values.min()) / max(1e-9, values.max() - values.min()))
+
+    by_mu, by_sigma = shade(mu), shade(sigma)
 
     fig, axes = plt.subplots(2, 3, figsize=(13.5, 8.0))
     panels = [
-        (axes[0][0], intra, inter, "S_intra  (depth difference) [um]", "S_inter  (backtrack) [um]",
+        (axes[0][0], intra, inter, by_mu,
+         "S_intra  (depth difference) [um]", "S_inter  (backtrack) [um]",
          "(1) Are the two measures separable?"),
-        (axes[0][1], sigma, intra, "sigma_syn [um]", "S_intra [um]",
-         "(2a) Anything beyond sigma?"),
-        (axes[0][2], sigma, inter, "sigma_syn [um]", "S_inter [um]",
-         "(2b) Anything beyond sigma?"),
-        (axes[1][0], intra, accuracy, "S_intra [um]", "Test accuracy",
+        (axes[0][1], sigma, intra, by_mu,
+         "sigma_syn [um]", "S_intra [um]",
+         "(2a) S_intra against sigma, coloured by mu"),
+        (axes[0][2], mu, inter, by_sigma,
+         "mu_syn [um]", "S_inter [um]",
+         "(2b) S_inter against mu, coloured by sigma"),
+        (axes[1][0], intra, accuracy, by_mu,
+         "S_intra [um]", "Test accuracy",
          "(3a) Does it reach the outcome?"),
-        (axes[1][1], inter, accuracy, "S_inter [um]", "Test accuracy",
+        (axes[1][1], inter, accuracy, by_mu,
+         "S_inter [um]", "Test accuracy",
          "(3b) Does it reach the outcome?"),
     ]
-    for ax, x, y, xlabel, ylabel, title in panels:
+    for ax, x, y, colours, xlabel, ylabel, title in panels:
         ax.scatter(x, y, c=colours, s=42, edgecolors="white", linewidths=0.6, zorder=3)
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
@@ -206,10 +220,11 @@ def run_plot(cfg, original_cwd):
                 transform=ax.transAxes, ha="right", fontsize=9, color="#52514e")
 
     axes[1][2].axis("off")
-    bar = fig.colorbar(plt.cm.ScalarMappable(
-        norm=plt.Normalize(mu.min(), mu.max()), cmap=cmap),
-        ax=axes[1][2], fraction=0.5, aspect=12, location="left")
-    bar.set_label("mu_syn [um]")
+    for values, label, fraction in ((mu, "mu_syn [um]", 0.35), (sigma, "sigma_syn [um]", 0.35)):
+        bar = fig.colorbar(plt.cm.ScalarMappable(
+            norm=plt.Normalize(values.min(), values.max()), cmap=cmap),
+            ax=axes[1][2], fraction=fraction, aspect=11, location="left")
+        bar.set_label(label)
 
     fig.suptitle(f"Synapse placement sparsity ({len(rows)} runs, cell1)", fontsize=13)
     fig.tight_layout()
