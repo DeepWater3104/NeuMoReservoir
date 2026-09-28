@@ -263,16 +263,36 @@ def run_plot(cfg, original_cwd):
                 transform=ax.transAxes, ha="right", fontsize=9, color="#52514e")
 
     axes[1][2].axis("off")
-    for values, label, ramp in ((mu, "mu_syn [um]", RAMPS["mu"]),
-                                (sigma, "sigma_syn [um]", RAMPS["sigma"]),
-                                (accuracy, accuracy_label, RAMPS["accuracy"])):
-        bar = fig.colorbar(plt.cm.ScalarMappable(
-            norm=plt.Normalize(values.min(), values.max()), cmap=plt.get_cmap(ramp)),
-            ax=axes[1][2], fraction=0.26, aspect=10, location="left")
-        bar.set_label(label)
 
     fig.suptitle(f"Synapse placement sparsity ({len(rows)} runs, cell1)", fontsize=13)
     fig.tight_layout()
+
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
+    cb_items = [
+        (mu, "mu_syn [um]", RAMPS["mu"], 0.72),
+        (sigma, "sigma_syn [um]", RAMPS["sigma"], 0.42),
+        (accuracy, accuracy_label, RAMPS["accuracy"], 0.12),
+    ]
+
+    for values, title_text, ramp, y_rel in cb_items:
+        cax = inset_axes(
+            axes[1][2],
+            width="82%",
+            height="9%",
+            loc="lower left",
+            bbox_to_anchor=(0.08, y_rel, 1.0, 1.0),
+            bbox_transform=axes[1][2].transAxes,
+            borderpad=0,
+        )
+        norm = plt.Normalize(values.min(), values.max())
+        cbar = fig.colorbar(
+            plt.cm.ScalarMappable(norm=norm, cmap=plt.get_cmap(ramp)),
+            cax=cax,
+            orientation="horizontal",
+        )
+        cax.set_title(title_text, fontsize=8.5, pad=5, loc="left")
+        cbar.ax.tick_params(labelsize=8)
     os.makedirs(cfg.figure_dir, exist_ok=True)
     figure_path = os.path.join(cfg.figure_dir, "sparsity_overview.png")
     fig.savefig(figure_path, dpi=200)
