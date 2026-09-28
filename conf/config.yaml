@@ -1,8 +1,10 @@
 # Default configurations for the reservoir simulation
 defaults:
   - task: random
-  - override hydra/launcher: joblib
   - _self_
+  # _self_ の後に置く。設定グループの値が config.yaml の既定値に勝つ必要があるため。
+  - optional sample: null
+  - override hydra/launcher: joblib
 hydra:
   job:
     chdir: True  # これをTrueにすると、プログラム実行中に自動でoutputs/...に移動します
@@ -23,15 +25,13 @@ syn_loc_condition: "gaussian" # uniform or gaussian or gaussian-apical or gaussi
 syn_loc_mean: 600
 syn_loc_std:  100
 
-# (μ,σ) をグリッドではなくランダムに振るための仕組み。sample_id に整数を渡すと、
-# その id だけから決まる (syn_loc_mean, syn_loc_std) が下の範囲から一様に引かれ、
-# 上の既定値を上書きする。multirun で sample_id=range(0,80) のように振る。
-# id ごとに独立な乱数列を使うので、後から id を足すだけでサンプルを増やせる
-# （既存の id の引き値は変わらない）。null なら上の固定値をそのまま使う。
+# (μ,σ) をランダムに振るときは conf/sample/ の設定グループを使う。
+#   uv run make_samples.py --count 70
+#   uv run main.py -m 'sample=glob(*)' ...
+# 1ファイルが1点で、(syn_loc_mean, syn_loc_std, seed, sample_id) を持つ。Hydra が
+# 合成するので .hydra/config.yaml に実際の値が載る。ジョブの中で導出すると、
+# スナップショットが既定値のまま残って実行内容と食い違う。
 sample_id: null
-sample_seed: 20260926
-syn_loc_mean_range: [0, 700]
-syn_loc_std_range: [25, 500]
 
 cell_name: "cell1/"
 

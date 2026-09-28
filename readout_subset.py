@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 BUFFER_GLOB = os.path.join("data", "buffer*.npz")
 RUN_INFO_FILENAME = os.path.join("data", "run_info.npz")
+HYDRA_CONFIG_FILENAME = os.path.join(".hydra", "config.yaml")
 RESULTS_FILENAME = os.path.join("data", "classification_results.npz")
 
 # Categorical slots 1 and 2 of the reference palette, light mode.
@@ -64,6 +65,10 @@ def load_run(run_dir):
     with np.load(info_path, allow_pickle=False) as npz:
         info = {key: npz[key] for key in npz.files}
 
+    # Configured parameters live in Hydra's snapshot, which is the record of what
+    # the run was actually given; run_info holds only what the run produced.
+    config = OmegaConf.load(os.path.join(run_dir, HYDRA_CONFIG_FILENAME))
+
     train, test = [], []
     for path in sorted(glob.glob(os.path.join(run_dir, BUFFER_GLOB))):
         with np.load(path, allow_pickle=True) as npz:
@@ -76,6 +81,12 @@ def load_run(run_dir):
             f"run_info says {expected[0]} and {expected[1]}")
 
     data = dict(info)
+    data["reg"] = float(config.reg)
+    data["num_states"] = int(config.num_states)
+    data["syn_loc_mean"] = float(config.syn_loc_mean)
+    data["syn_loc_std"] = float(config.syn_loc_std)
+    data["sample_id"] = int(config.sample_id) if config.sample_id is not None else -1
+    data["seed"] = int(config.seed)
     data["train_state_vars"] = np.concatenate(train, axis=0)
     data["test_state_vars"] = np.concatenate(test, axis=0)
     data["trial_rows"] = np.array([chunk.shape[0] for chunk in train + test])
