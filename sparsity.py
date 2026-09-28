@@ -45,16 +45,28 @@ def load_cell_tree(cell_name):
     This is a property of the morphology rather than of any run, so it is read
     once from the model and applies to every run of that cell.
     """
-    from neuron import h as nrn
+    import neuron
     from neuron_simulation import (run_nrnivmodl, get_hoc_morph_for_emodel_folder,
                                    extract_template_name, check_line_in_file)
 
-    # Mirrors how the worker loads a cell. The path must be absolute: the template
-    # hoc pulls in further files by bare name, and NEURON finds them only because
-    # loading the template by absolute path puts its directory on the search path.
+    # The worker compiles the mechanisms before importing NEURON, which then picks
+    # them up from the current directory. Here NEURON is already imported by the
+    # time we get a cell, so they have to be loaded explicitly — and without them
+    # the template's hoc fails to load at all, since it names them. Compiling into
+    # the repository root also keeps the build out of every output directory.
     cell_dir = os.path.join(REPO_ROOT, "cells", cell_name)
-    run_nrnivmodl(cell_dir)
+    previous = os.getcwd()
+    os.chdir(REPO_ROOT)
+    try:
+        run_nrnivmodl(cell_dir)
+    finally:
+        os.chdir(previous)
+    if not neuron.load_mechanisms(REPO_ROOT, warn_if_already_loaded=False):
+        raise RuntimeError(f"No compiled mechanisms found under {REPO_ROOT}")
 
+    from neuron import h as nrn
+
+    # Absolute, so that the files the template pulls in by bare name resolve.
     hoc_path, morph_path = get_hoc_morph_for_emodel_folder(cell_dir)
     nrn.load_file('stdrun.hoc')
     nrn.load_file(hoc_path.as_posix())
