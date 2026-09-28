@@ -152,10 +152,82 @@ def sparsity_for_run(tree, syn_names, syn_distance):
     }
 
 
+def run_plot(cfg, original_cwd):
+    """Five views of the two measures, on one page.
+
+    They answer three questions in order: whether the measures are separable at
+    all, whether they carry anything beyond the parameters that generated them,
+    and whether they reach the outcome. Colour is the placement mean throughout,
+    on one sequential ramp, so a point keeps its identity across panels.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    path = cfg.sparsity_path
+    if path is None:
+        raise ValueError("sparsity_path is required in plot mode")
+    if not os.path.isabs(path):
+        path = os.path.join(original_cwd, path)
+    with open(path) as f:
+        rows = json.load(f)
+
+    intra = np.array([r["intra"] for r in rows])
+    inter = np.array([r["inter"] for r in rows])
+    mu = np.array([r["syn_loc_mean"] for r in rows])
+    sigma = np.array([r["syn_loc_std"] for r in rows])
+    accuracy = np.array([r["test_accuracy"] for r in rows])
+
+    # One hue, light to dark, with the palest quarter cut so no point vanishes.
+    cmap = plt.get_cmap("Blues")
+    colours = cmap(0.25 + 0.75 * (mu - mu.min()) / max(1e-9, mu.max() - mu.min()))
+
+    fig, axes = plt.subplots(2, 3, figsize=(13.5, 8.0))
+    panels = [
+        (axes[0][0], intra, inter, "S_intra  (depth difference) [um]", "S_inter  (backtrack) [um]",
+         "(1) Are the two measures separable?"),
+        (axes[0][1], sigma, intra, "sigma_syn [um]", "S_intra [um]",
+         "(2a) Anything beyond sigma?"),
+        (axes[0][2], sigma, inter, "sigma_syn [um]", "S_inter [um]",
+         "(2b) Anything beyond sigma?"),
+        (axes[1][0], intra, accuracy, "S_intra [um]", "Test accuracy",
+         "(3a) Does it reach the outcome?"),
+        (axes[1][1], inter, accuracy, "S_inter [um]", "Test accuracy",
+         "(3b) Does it reach the outcome?"),
+    ]
+    for ax, x, y, xlabel, ylabel, title in panels:
+        ax.scatter(x, y, c=colours, s=42, edgecolors="white", linewidths=0.6, zorder=3)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.set_title(title, fontsize=10, pad=8)
+        ax.grid(True, linestyle=":", alpha=0.4)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.text(0.97, 0.04, f"r = {np.corrcoef(x, y)[0, 1]:+.2f}",
+                transform=ax.transAxes, ha="right", fontsize=9, color="#52514e")
+
+    axes[1][2].axis("off")
+    bar = fig.colorbar(plt.cm.ScalarMappable(
+        norm=plt.Normalize(mu.min(), mu.max()), cmap=cmap),
+        ax=axes[1][2], fraction=0.5, aspect=12, location="left")
+    bar.set_label("mu_syn [um]")
+
+    fig.suptitle(f"Synapse placement sparsity ({len(rows)} runs, cell1)", fontsize=13)
+    fig.tight_layout()
+    os.makedirs(cfg.figure_dir, exist_ok=True)
+    figure_path = os.path.join(cfg.figure_dir, "sparsity_overview.png")
+    fig.savefig(figure_path, dpi=200)
+    logger.info(f"Saved {figure_path}")
+    plt.close(fig)
+
+
 @hydra.main(version_base=None, config_path="conf", config_name="sparsity")
 def main(cfg: DictConfig):
     from hydra.utils import get_original_cwd
     original_cwd = get_original_cwd()
+
+    if cfg.mode == "plot":
+        run_plot(cfg, original_cwd)
+        return
 
     patterns = [cfg.run_dir] if isinstance(cfg.run_dir, str) else list(cfg.run_dir)
     run_dirs = []
