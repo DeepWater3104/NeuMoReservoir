@@ -234,8 +234,9 @@ def run_plot(cfg, original_cwd):
     by_sigma = shade(sigma, RAMPS["sigma"])
     by_accuracy = shade(accuracy, RAMPS["accuracy"])
 
-    fig, axes = plt.subplots(2, 3, figsize=(13.5, 8.0))
+    fig, axes = plt.subplots(3, 3, figsize=(13.5, 11.5))
     panels = [
+        # Row 0: Sparsity plane & parameters to sparsity
         (axes[0][0], intra, inter, by_accuracy,
          "S_intra  (depth difference) [um]", "S_inter  (backtrack) [um]",
          "(1) Separable, and where accuracy sits"),
@@ -245,12 +246,22 @@ def run_plot(cfg, original_cwd):
         (axes[0][2], mu, inter, by_sigma,
          "mu_syn [um]", "S_inter [um]",
          "(2b) S_inter against mu, coloured by sigma"),
-        (axes[1][0], intra, accuracy, by_mu,
+
+        # Row 1: Parameters directly to accuracy
+        (axes[1][0], sigma, accuracy, by_mu,
+         "sigma_syn [um]", accuracy_label,
+         "(3a) Accuracy against sigma, coloured by mu"),
+        (axes[1][1], mu, accuracy, by_sigma,
+         "mu_syn [um]", accuracy_label,
+         "(3b) Accuracy against mu, coloured by sigma"),
+
+        # Row 2: Sparsity to accuracy (slid from old Row 1)
+        (axes[2][0], intra, accuracy, by_mu,
          "S_intra [um]", accuracy_label,
-         "(3a) Does it reach the outcome?"),
-        (axes[1][1], inter, accuracy, by_sigma,
+         "(4a) Does S_intra reach the outcome?"),
+        (axes[2][1], inter, accuracy, by_sigma,
          "S_inter [um]", accuracy_label,
-         "(3b) Does it reach the outcome?"),
+         "(4b) Does S_inter reach the outcome?"),
     ]
     for ax, x, y, colours, xlabel, ylabel, title in panels:
         ax.scatter(x, y, c=colours, s=42, edgecolors="white", linewidths=0.6, zorder=3)
@@ -263,6 +274,7 @@ def run_plot(cfg, original_cwd):
                 transform=ax.transAxes, ha="right", fontsize=9, color="#52514e")
 
     axes[1][2].axis("off")
+    axes[2][2].axis("off")
 
     fig.suptitle(f"Synapse placement sparsity ({len(rows)} runs, cell1)", fontsize=13)
     fig.tight_layout()
@@ -277,12 +289,12 @@ def run_plot(cfg, original_cwd):
 
     for values, title_text, ramp, y_rel in cb_items:
         cax = inset_axes(
-            axes[1][2],
+            axes[2][2],
             width="82%",
             height="9%",
             loc="lower left",
             bbox_to_anchor=(0.08, y_rel, 1.0, 1.0),
-            bbox_transform=axes[1][2].transAxes,
+            bbox_transform=axes[2][2].transAxes,
             borderpad=0,
         )
         norm = plt.Normalize(values.min(), values.max())
