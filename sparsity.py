@@ -172,6 +172,42 @@ def run_plot(cfg, original_cwd):
     with open(path) as f:
         rows = json.load(f)
 
+    # The accuracy carried in sparsity.json is the one the run itself reported,
+    # fitted on every recorded site. That is not the quantity the design calls
+    # for: accuracy is defined as the mean over random readouts of a fixed size,
+    # so that it does not depend on which sites were used and stays comparable
+    # across cells with different compartment counts. Reading every site instead
+    # raises it — measured at 0.72 against 0.53 for a hundred sites on this cell
+    # — and pushes the runs toward the ceiling, where differences compress.
+    accuracy_label = "Test accuracy (all sites)"
+    if cfg.accuracy_path is not None:
+        accuracy_path = cfg.accuracy_path
+        if not os.path.isabs(accuracy_path):
+            accuracy_path = os.path.join(original_cwd, accuracy_path)
+        with open(accuracy_path) as f:
+            summary = json.load(f)
+
+        marginalised = {}
+        for run in summary["runs"]:
+            sizes = run["sizes"]
+            if len(sizes) != 1:
+                raise ValueError(
+                    f"Expected one subset size per run, found {[s['num_readout_sites'] for s in sizes]}")
+            marginalised[run["source_run"]] = (sizes[0]["test_accuracy_mean"],
+                                               sizes[0]["num_readout_sites"],
+                                               sizes[0]["num_draws"])
+
+        missing = [r["run_dir"] for r in rows if r["run_dir"] not in marginalised]
+        if missing:
+            raise ValueError(f"{len(missing)} run(s) have no marginalised accuracy, "
+                             f"first: {missing[0]}")
+        k = {marginalised[r["run_dir"]][1] for r in rows}
+        draws = {marginalised[r["run_dir"]][2] for r in rows}
+        for r in rows:
+            r["test_accuracy"] = marginalised[r["run_dir"]][0]
+        accuracy_label = f"Test accuracy (mean over {max(draws)} readouts of {max(k)} sites)"
+        logger.info(f"Using marginalised accuracy: k={max(k)}, {max(draws)} draws per run")
+
     intra = np.array([r["intra"] for r in rows])
     inter = np.array([r["inter"] for r in rows])
     mu = np.array([r["syn_loc_mean"] for r in rows])
@@ -210,10 +246,10 @@ def run_plot(cfg, original_cwd):
          "mu_syn [um]", "S_inter [um]",
          "(2b) S_inter against mu, coloured by sigma"),
         (axes[1][0], intra, accuracy, by_mu,
-         "S_intra [um]", "Test accuracy",
+         "S_intra [um]", accuracy_label,
          "(3a) Does it reach the outcome?"),
         (axes[1][1], inter, accuracy, by_sigma,
-         "S_inter [um]", "Test accuracy",
+         "S_inter [um]", accuracy_label,
          "(3b) Does it reach the outcome?"),
     ]
     for ax, x, y, colours, xlabel, ylabel, title in panels:
@@ -229,7 +265,7 @@ def run_plot(cfg, original_cwd):
     axes[1][2].axis("off")
     for values, label, ramp in ((mu, "mu_syn [um]", RAMPS["mu"]),
                                 (sigma, "sigma_syn [um]", RAMPS["sigma"]),
-                                (accuracy, "Test accuracy", RAMPS["accuracy"])):
+                                (accuracy, accuracy_label, RAMPS["accuracy"])):
         bar = fig.colorbar(plt.cm.ScalarMappable(
             norm=plt.Normalize(values.min(), values.max()), cmap=plt.get_cmap(ramp)),
             ax=axes[1][2], fraction=0.26, aspect=10, location="left")

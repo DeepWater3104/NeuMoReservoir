@@ -16,3 +16,4 @@ data_dir: "data"
 mode: "compute"
 sparsity_path: null
 figure_dir: "figure"
+accuracy_path: null   # readout_subset.py の results.json。指定すると周辺化した Accuracy を使う
