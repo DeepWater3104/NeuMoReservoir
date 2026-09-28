@@ -45,27 +45,27 @@ def load_cell_tree(cell_name):
     This is a property of the morphology rather than of any run, so it is read
     once from the model and applies to every run of that cell.
     """
-    import contextlib
-
     from neuron import h as nrn
     from neuron_simulation import (run_nrnivmodl, get_hoc_morph_for_emodel_folder,
                                    extract_template_name, check_line_in_file)
 
-    cell_dir = os.path.join(REPO_ROOT, "cells", cell_name)
+    # The template hoc loads further files by relative name, and nrnivmodl writes
+    # its architecture directory into the current one, so the whole load happens
+    # from the repository root rather than from Hydra's output directory.
     previous = os.getcwd()
     os.chdir(REPO_ROOT)
     try:
+        cell_dir = os.path.join("cells", cell_name)
         run_nrnivmodl(cell_dir)
+        hoc_path, morph_path = get_hoc_morph_for_emodel_folder(cell_dir)
+        nrn.load_file('stdrun.hoc')
+        nrn.load_file(hoc_path.as_posix())
+        template = extract_template_name(hoc_path.as_posix())
+        cell = (getattr(nrn, template)(0, cell_dir + "morphology", morph_path.name)
+                if check_line_in_file(hoc_path.as_posix(), "gid = $1")
+                else getattr(nrn, template)(cell_dir + "morphology", morph_path.name))
     finally:
         os.chdir(previous)
-
-    hoc_path, morph_path = get_hoc_morph_for_emodel_folder(cell_dir)
-    nrn.load_file('stdrun.hoc')
-    nrn.load_file(hoc_path.as_posix())
-    template = extract_template_name(hoc_path.as_posix())
-    cell = (getattr(nrn, template)(0, cell_dir + "morphology", morph_path.name)
-            if check_line_in_file(hoc_path.as_posix(), "gid = $1")
-            else getattr(nrn, template)(cell_dir + "morphology", morph_path.name))
 
     nrn.distance(0, 0.5, sec=cell.soma[0])
 
