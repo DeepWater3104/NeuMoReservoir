@@ -178,24 +178,31 @@ def run_plot(cfg, original_cwd):
     sigma = np.array([r["syn_loc_std"] for r in rows])
     accuracy = np.array([r["test_accuracy"] for r in rows])
 
-    # One hue, light to dark, with the palest quarter cut so no point vanishes.
+    # Three quantities are used as colour, so each gets its own single-hue ramp,
+    # light to dark, with the palest quarter cut so no point vanishes against the
+    # page. Keeping one hue per quantity means a colour can be read back to what
+    # it stands for without consulting which panel it came from.
+    RAMPS = {"mu": "Blues", "sigma": "Oranges", "accuracy": "Purples"}
+
+    def shade(values, ramp):
+        cmap = plt.get_cmap(ramp)
+        span = max(1e-9, values.max() - values.min())
+        return cmap(0.25 + 0.75 * (values - values.min()) / span)
+
     # Each panel of (2) is drawn against the parameter that explains its measure —
     # sigma sets how far apart in depth the synapses fall, mu sets which part of
     # the tree they land on and so how finely it has branched there — and coloured
-    # by the other, so what the pair of parameters leaves unexplained is visible
-    # as scatter that the colour does not organise.
-    cmap = plt.get_cmap("Blues")
-
-    def shade(values):
-        return cmap(0.25 + 0.75 * (values - values.min()) / max(1e-9, values.max() - values.min()))
-
-    by_mu, by_sigma = shade(mu), shade(sigma)
+    # by the other, so what the pair leaves unexplained shows as scatter the colour
+    # does not organise. Panels (3) keep that pairing.
+    by_mu = shade(mu, RAMPS["mu"])
+    by_sigma = shade(sigma, RAMPS["sigma"])
+    by_accuracy = shade(accuracy, RAMPS["accuracy"])
 
     fig, axes = plt.subplots(2, 3, figsize=(13.5, 8.0))
     panels = [
-        (axes[0][0], intra, inter, by_mu,
+        (axes[0][0], intra, inter, by_accuracy,
          "S_intra  (depth difference) [um]", "S_inter  (backtrack) [um]",
-         "(1) Are the two measures separable?"),
+         "(1) Separable, and where accuracy sits"),
         (axes[0][1], sigma, intra, by_mu,
          "sigma_syn [um]", "S_intra [um]",
          "(2a) S_intra against sigma, coloured by mu"),
@@ -205,7 +212,7 @@ def run_plot(cfg, original_cwd):
         (axes[1][0], intra, accuracy, by_mu,
          "S_intra [um]", "Test accuracy",
          "(3a) Does it reach the outcome?"),
-        (axes[1][1], inter, accuracy, by_mu,
+        (axes[1][1], inter, accuracy, by_sigma,
          "S_inter [um]", "Test accuracy",
          "(3b) Does it reach the outcome?"),
     ]
@@ -220,10 +227,12 @@ def run_plot(cfg, original_cwd):
                 transform=ax.transAxes, ha="right", fontsize=9, color="#52514e")
 
     axes[1][2].axis("off")
-    for values, label, fraction in ((mu, "mu_syn [um]", 0.35), (sigma, "sigma_syn [um]", 0.35)):
+    for values, label, ramp in ((mu, "mu_syn [um]", RAMPS["mu"]),
+                                (sigma, "sigma_syn [um]", RAMPS["sigma"]),
+                                (accuracy, "Test accuracy", RAMPS["accuracy"])):
         bar = fig.colorbar(plt.cm.ScalarMappable(
-            norm=plt.Normalize(values.min(), values.max()), cmap=cmap),
-            ax=axes[1][2], fraction=fraction, aspect=11, location="left")
+            norm=plt.Normalize(values.min(), values.max()), cmap=plt.get_cmap(ramp)),
+            ax=axes[1][2], fraction=0.26, aspect=10, location="left")
         bar.set_label(label)
 
     fig.suptitle(f"Synapse placement sparsity ({len(rows)} runs, cell1)", fontsize=13)
