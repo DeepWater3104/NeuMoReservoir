@@ -47,7 +47,7 @@ def write_samples(count, sampling_seed, mean_range, std_range, start):
         std = rng.uniform(*std_range)
         seed = int(rng.integers(1, 2**31 - 1))
 
-        path = os.path.join(CONF_DIR, f"{sample_id:03d}.yaml")
+        path = os.path.join(CONF_DIR, f"s{sample_id:03d}.yaml")
         with open(path, "w") as f:
             f.write(TEMPLATE.format(sample_id=sample_id, seed=seed, mean=mean, std=std))
         written.append((sample_id, mean, std, seed))
@@ -68,7 +68,7 @@ def main():
                             args.mean_range, args.std_range, args.start)
     print(f"Wrote {len(written)} files to {CONF_DIR}")
     for sample_id, mean, std, seed in written[:3]:
-        print(f"  {sample_id:03d}: syn_loc_mean={mean:.2f} syn_loc_std={std:.2f} seed={seed}")
+        print(f"  s{sample_id:03d}: syn_loc_mean={mean:.2f} syn_loc_std={std:.2f} seed={seed}")
     if len(written) > 3:
         print(f"  ... ({len(written) - 3} more)")
 
