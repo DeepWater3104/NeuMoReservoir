@@ -164,13 +164,24 @@ def run_plot(cfg, original_cwd):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    path = cfg.sparsity_path
-    if path is None:
+    if cfg.sparsity_path is None:
         raise ValueError("sparsity_path is required in plot mode")
-    if not os.path.isabs(path):
-        path = os.path.join(original_cwd, path)
-    with open(path) as f:
-        rows = json.load(f)
+
+    from omegaconf import ListConfig
+    sparsity_inputs = cfg.sparsity_path
+    if isinstance(sparsity_inputs, (list, ListConfig)):
+        sparsity_paths = list(sparsity_inputs)
+    else:
+        sparsity_paths = [sparsity_inputs]
+
+    rows = []
+    for p in sparsity_paths:
+        if not os.path.isabs(p):
+            p = os.path.join(original_cwd, p)
+        with open(p) as f:
+            batch_rows = json.load(f)
+            rows.extend(batch_rows)
+    logger.info(f"Loaded {len(rows)} total sparsity records from {len(sparsity_paths)} path(s)")
 
     # The accuracy carried in sparsity.json is the one the run itself reported,
     # fitted on every recorded site. That is not the quantity the design calls
@@ -181,28 +192,42 @@ def run_plot(cfg, original_cwd):
     # — and pushes the runs toward the ceiling, where differences compress.
     accuracy_label = "Test accuracy (all sites)"
     if cfg.accuracy_path is not None:
-        accuracy_path = cfg.accuracy_path
-        if not os.path.isabs(accuracy_path):
-            accuracy_path = os.path.join(original_cwd, accuracy_path)
-        with open(accuracy_path) as f:
-            summary = json.load(f)
+        acc_inputs = cfg.accuracy_path
+        if isinstance(acc_inputs, (list, ListConfig)):
+            acc_paths = list(acc_inputs)
+        else:
+            acc_paths = [acc_inputs]
 
         marginalised = {}
-        for run in summary["runs"]:
-            sizes = run["sizes"]
-            if len(sizes) != 1:
-                raise ValueError(
-                    f"Expected one subset size per run, found {[s['num_readout_sites'] for s in sizes]}")
-            marginalised[run["source_run"]] = (sizes[0]["test_accuracy_mean"],
-                                               sizes[0]["num_readout_sites"],
-                                               sizes[0]["num_draws"])
+        for ap in acc_paths:
+            if not os.path.isabs(ap):
+                ap = os.path.join(original_cwd, ap)
+            with open(ap) as f:
+                summary = json.load(f)
+            for run in summary["runs"]:
+                sizes = run["sizes"]
+                if len(sizes) != 1:
+                    raise ValueError(
+                        f"Expected one subset size per run, found {[s['num_readout_sites'] for s in sizes]}")
+                marginalised[run["source_run"]] = (sizes[0]["test_accuracy_mean"],
+                                                   sizes[0]["num_readout_sites"],
+                                                   sizes[0]["num_draws"])
 
         common_rows = [r for r in rows if r["run_dir"] in marginalised]
         if not common_rows:
             raise ValueError("No common runs found between sparsity.json and accuracy results.json")
-        logger.info(f"Matched {len(common_rows)} common runs across both pipelines "
+
+        # Deduplicate rows by run_dir if any overlap
+        seen_runs = set()
+        dedup_rows = []
+        for r in common_rows:
+            if r["run_dir"] not in seen_runs:
+                seen_runs.add(r["run_dir"])
+                dedup_rows.append(r)
+        rows = dedup_rows
+
+        logger.info(f"Matched {len(rows)} unique common runs across both pipelines "
                     f"(sparsity: {len(rows)}, accuracy: {len(marginalised)})")
-        rows = common_rows
         k = {marginalised[r["run_dir"]][1] for r in rows}
         draws = {marginalised[r["run_dir"]][2] for r in rows}
         for r in rows:
