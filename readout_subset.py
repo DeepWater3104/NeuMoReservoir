@@ -313,17 +313,34 @@ def run_compute(cfg, original_cwd):
 
     n_jobs = int(cfg.get("n_jobs", 1))
     if n_jobs == 1:
-        results = [
-            _process_one_run(i, d, cfg.subset_sizes, cfg.num_draws, cfg.seed, cfg.reg)
-            for i, d in enumerate(run_dirs)
-        ]
+        results = []
+        for i, d in enumerate(run_dirs):
+            try:
+                res = _process_one_run(i, d, cfg.subset_sizes, cfg.num_draws, cfg.seed, cfg.reg)
+                results.append(res)
+                logger.info(f"[{len(results)}/{len(run_dirs)}] Successfully processed {d}")
+            except Exception as e:
+                logger.warning(f"Skipping run {d} due to error: {e}")
+                continue
     else:
         from joblib import Parallel, delayed
         logger.info(f"Running in parallel with {n_jobs} jobs")
-        results = Parallel(n_jobs=n_jobs, verbose=10)(
-            delayed(_process_one_run)(i, d, cfg.subset_sizes, cfg.num_draws, cfg.seed, cfg.reg)
+
+        def _safe_process(i, d, subset_sizes, num_draws, seed, reg):
+            try:
+                return _process_one_run(i, d, subset_sizes, num_draws, seed, reg)
+            except Exception as e:
+                logger.warning(f"Skipping run {d} due to error: {e}")
+                return None
+
+        raw_results = Parallel(n_jobs=n_jobs, verbose=10)(
+            delayed(_safe_process)(i, d, cfg.subset_sizes, cfg.num_draws, cfg.seed, cfg.reg)
             for i, d in enumerate(run_dirs)
         )
+        results = [r for r in raw_results if r is not None]
+
+    if not results:
+        raise RuntimeError(f"No run was successfully processed out of {len(run_dirs)} candidates.")
 
     per_run = [r[0] for r in results]
     summaries = [r[1] for r in results]

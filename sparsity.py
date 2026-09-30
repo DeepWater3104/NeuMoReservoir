@@ -197,10 +197,12 @@ def run_plot(cfg, original_cwd):
                                                sizes[0]["num_readout_sites"],
                                                sizes[0]["num_draws"])
 
-        missing = [r["run_dir"] for r in rows if r["run_dir"] not in marginalised]
-        if missing:
-            raise ValueError(f"{len(missing)} run(s) have no marginalised accuracy, "
-                             f"first: {missing[0]}")
+        common_rows = [r for r in rows if r["run_dir"] in marginalised]
+        if not common_rows:
+            raise ValueError("No common runs found between sparsity.json and accuracy results.json")
+        logger.info(f"Matched {len(common_rows)} common runs across both pipelines "
+                    f"(sparsity: {len(rows)}, accuracy: {len(marginalised)})")
+        rows = common_rows
         k = {marginalised[r["run_dir"]][1] for r in rows}
         draws = {marginalised[r["run_dir"]][2] for r in rows}
         for r in rows:
@@ -335,28 +337,35 @@ def main(cfg: DictConfig):
     trees = {}
     rows = []
     for run_dir in run_dirs:
-        config = OmegaConf.load(os.path.join(run_dir, HYDRA_CONFIG_FILENAME))
-        cell_name = str(config.cell_name)
-        if cell_name not in trees:
-            trees[cell_name], _ = load_cell_tree(cell_name)
-            logger.info(f"Loaded morphology for {cell_name}: {len(trees[cell_name])} sections")
+        try:
+            config = OmegaConf.load(os.path.join(run_dir, HYDRA_CONFIG_FILENAME))
+            cell_name = str(config.cell_name)
+            if cell_name not in trees:
+                trees[cell_name], _ = load_cell_tree(cell_name)
+                logger.info(f"Loaded morphology for {cell_name}: {len(trees[cell_name])} sections")
 
-        with np.load(os.path.join(run_dir, RUN_INFO_FILENAME), allow_pickle=False) as npz:
-            syn_names = npz["syn_names"]
-            syn_distance = npz["syn_distance"]
-            accuracy = float((npz["test_predicted_label"] == npz["test_label"]).mean())
+            with np.load(os.path.join(run_dir, RUN_INFO_FILENAME), allow_pickle=False) as npz:
+                syn_names = npz["syn_names"]
+                syn_distance = npz["syn_distance"]
+                accuracy = float((npz["test_predicted_label"] == npz["test_label"]).mean())
 
-        row = sparsity_for_run(trees[cell_name], syn_names, syn_distance)
-        row.update({
-            "run_dir": run_dir,
-            "cell_name": cell_name,
-            "sample_id": int(config.sample_id) if config.sample_id is not None else -1,
-            "syn_loc_mean": float(config.syn_loc_mean),
-            "syn_loc_std": float(config.syn_loc_std),
-            "seed": int(config.seed),
-            "test_accuracy": accuracy,
-        })
-        rows.append(row)
+            row = sparsity_for_run(trees[cell_name], syn_names, syn_distance)
+            row.update({
+                "run_dir": run_dir,
+                "cell_name": cell_name,
+                "sample_id": int(config.sample_id) if config.sample_id is not None else -1,
+                "syn_loc_mean": float(config.syn_loc_mean),
+                "syn_loc_std": float(config.syn_loc_std),
+                "seed": int(config.seed),
+                "test_accuracy": accuracy,
+            })
+            rows.append(row)
+        except Exception as e:
+            logger.warning(f"Skipping run {run_dir} in sparsity: {e}")
+            continue
+
+    if not rows:
+        raise RuntimeError("No run was successfully processed in sparsity compute.")
 
     os.makedirs(cfg.data_dir, exist_ok=True)
     results_path = os.path.join(cfg.data_dir, "sparsity.json")
