@@ -291,6 +291,7 @@ def resolve_run_dirs(run_dir, original_cwd):
 
 
 def _process_one_run(run_index, run_dir, subset_sizes, num_draws, seed, reg_override):
+    import gc
     data, reference_accuracy = load_run(run_dir)
     reg = float(data["reg"]) if reg_override is None else float(reg_override)
 
@@ -304,6 +305,8 @@ def _process_one_run(run_index, run_dir, subset_sizes, num_draws, seed, reg_over
     if "refit_minus_reported" in summary:
         logger.info(f"  [{run_index}] refit on all sites differs from the run's own "
                     f"accuracy by {summary['refit_minus_reported']:+.4f}")
+    del data
+    gc.collect()
     return curves, summary
 
 
