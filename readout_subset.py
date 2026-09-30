@@ -290,27 +290,43 @@ def resolve_run_dirs(run_dir, original_cwd):
     return resolved
 
 
+def _process_one_run(run_index, run_dir, subset_sizes, num_draws, seed, reg_override):
+    data, reference_accuracy = load_run(run_dir)
+    reg = float(data["reg"]) if reg_override is None else float(reg_override)
+
+    curves = sweep_subset_sizes(data, subset_sizes, int(num_draws),
+                                int(seed) + run_index, reg)
+    curves["run"] = np.full(curves["size"].shape, run_index)
+
+    summary = summarise(curves, reference_accuracy)
+    summary["source_run"] = run_dir
+    summary["reg"] = reg
+    if "refit_minus_reported" in summary:
+        logger.info(f"  [{run_index}] refit on all sites differs from the run's own "
+                    f"accuracy by {summary['refit_minus_reported']:+.4f}")
+    return curves, summary
+
+
 def run_compute(cfg, original_cwd):
     run_dirs = resolve_run_dirs(cfg.run_dir, original_cwd)
     logger.info(f"Analysing {len(run_dirs)} run(s)")
 
-    per_run, summaries = [], []
-    for run_index, run_dir in enumerate(run_dirs):
-        data, reference_accuracy = load_run(run_dir)
-        reg = float(data["reg"]) if cfg.reg is None else float(cfg.reg)
+    n_jobs = int(cfg.get("n_jobs", 1))
+    if n_jobs == 1:
+        results = [
+            _process_one_run(i, d, cfg.subset_sizes, cfg.num_draws, cfg.seed, cfg.reg)
+            for i, d in enumerate(run_dirs)
+        ]
+    else:
+        from joblib import Parallel, delayed
+        logger.info(f"Running in parallel with {n_jobs} jobs")
+        results = Parallel(n_jobs=n_jobs, verbose=10)(
+            delayed(_process_one_run)(i, d, cfg.subset_sizes, cfg.num_draws, cfg.seed, cfg.reg)
+            for i, d in enumerate(run_dirs)
+        )
 
-        curves = sweep_subset_sizes(data, cfg.subset_sizes, int(cfg.num_draws),
-                                    int(cfg.seed) + run_index, reg)
-        curves["run"] = np.full(curves["size"].shape, run_index)
-        per_run.append(curves)
-
-        summary = summarise(curves, reference_accuracy)
-        summary["source_run"] = run_dir
-        summary["reg"] = reg
-        summaries.append(summary)
-        if "refit_minus_reported" in summary:
-            logger.info(f"  [{run_index}] refit on all sites differs from the run's own "
-                        f"accuracy by {summary['refit_minus_reported']:+.4f}")
+    per_run = [r[0] for r in results]
+    summaries = [r[1] for r in results]
 
     num_sites = {int(c["num_sites"]) for c in per_run}
     if len(num_sites) > 1:
