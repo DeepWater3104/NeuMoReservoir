@@ -181,7 +181,7 @@ def process_single_run(
                 t = data_ts["t_rec"]
                 ca = data_ts["variables"][0]  # Ca (T, N)
                 vm = data_ts["variables"][1]  # Vm (T, N)
-        except (zipfile.BadZipFile, ValueError, KeyError, IndexError) as e:
+        except (zipfile.BadZipFile, ValueError, KeyError, IndexError, EOFError, OSError) as e:
             logger.warning(f"Corrupted buffer file {bf}: {e}")
             continue
 
