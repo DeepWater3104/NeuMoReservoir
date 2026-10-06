@@ -13,6 +13,7 @@ data_dir: "data"
 
 # compute: run_dir から算出して dynamics.json を書く
 # plot:    保存済みの dynamics.json, results.json, sparsity.json を読んで図を描く
+# clusters: 保存済みの events.npz を読んで発火ごとの散布図を描く
 mode: "compute"
 dynamics_path: null
 accuracy_path: null
@@ -27,3 +28,10 @@ exclusion_window_ms: 10.0
 test_only: true
 n_jobs: 12
 force: false
+
+# clusters: compute が Hydra のランディレクトリに書いた events.npz を読み、
+#           ランごとに R(All PCs) vs R(PC1 Excluded) を μ の順に並べて描く
+events_path: null
+# σ がこの値 [µm] 以下のランだけを描く（σ が大きいと μ の違いが薄まるため）
+sigma_max: 100.0
+n_cols: 6

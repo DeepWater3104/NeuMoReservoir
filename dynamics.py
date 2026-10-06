@@ -30,6 +30,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
+from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from scipy.stats import pearsonr
 from sklearn.decomposition import PCA
@@ -173,9 +174,12 @@ def process_single_run(
 
     bap_er_pairs = []
     dspike_er_pairs = []
+    # Per-event raw values: (kind, trial, t_ms, er_all, er_pc1_excluded); kind 0 = bAP, 1 = dSpike
+    events = []
     total_duration_s = 0.0
 
     for bf in buffers_to_process:
+        trial = int(os.path.basename(bf)[len("buffer"):-len(".npz")])
         try:
             with np.load(bf, allow_pickle=True) as data_ts:
                 t = data_ts["t_rec"]
@@ -220,6 +224,7 @@ def process_single_run(
             er_orig = calculate_effective_rank(ca[w_slice, :])
             er_res = calculate_effective_rank(ca_res[w_slice, :])
             bap_er_pairs.append((er_orig, er_res))
+            events.append((0, trial, float(t[idx]), er_orig, er_res))
 
         # Effective Rank for dSpike
         for idx in dspike_idxs:
@@ -229,6 +234,7 @@ def process_single_run(
             er_orig = calculate_effective_rank(ca[w_slice, :])
             er_res = calculate_effective_rank(ca_res[w_slice, :])
             dspike_er_pairs.append((er_orig, er_res))
+            events.append((1, trial, float(t[idx]), er_orig, er_res))
 
         del ca, vm, ca_proj, ca_res
         gc.collect()
@@ -274,12 +280,42 @@ def process_single_run(
         meta["mean_bap_er_orig"] = np.nan
         meta["mean_bap_er_res"] = np.nan
 
-    return meta
+    return meta, events
 
 
 # ==============================================================================
 # 3. Compute Mode
 # ==============================================================================
+
+def _save_events(valid, out_path):
+    """Save every detected spike event with its Effective Rank pair, indexed by run."""
+    run_dir, mu, sigma = [], [], []
+    columns = {"run": [], "kind": [], "trial": [], "t_ms": [], "er_all": [], "er_pc1_excluded": []}
+    for i, (meta, events) in enumerate(valid):
+        run_dir.append(meta["run_dir"])
+        mu.append(np.nan if meta.get("syn_loc_mean") is None else float(meta["syn_loc_mean"]))
+        sigma.append(np.nan if meta.get("syn_loc_std") is None else float(meta["syn_loc_std"]))
+        for kind, trial, t_ms, er_all, er_res in events:
+            columns["run"].append(i)
+            columns["kind"].append(kind)
+            columns["trial"].append(trial)
+            columns["t_ms"].append(t_ms)
+            columns["er_all"].append(er_all)
+            columns["er_pc1_excluded"].append(er_res)
+    np.savez(
+        out_path,
+        run_dir=np.array(run_dir),
+        syn_loc_mean=np.array(mu),
+        syn_loc_std=np.array(sigma),
+        run=np.array(columns["run"], dtype=np.int32),
+        kind=np.array(columns["kind"], dtype=np.int8),
+        trial=np.array(columns["trial"], dtype=np.int32),
+        t_ms=np.array(columns["t_ms"]),
+        er_all=np.array(columns["er_all"]),
+        er_pc1_excluded=np.array(columns["er_pc1_excluded"]),
+    )
+    logger.info(f"Saved {len(columns['run'])} events from {len(run_dir)} runs to: {out_path}")
+
 
 def run_compute(cfg: DictConfig):
     """Parallel batch computation across all runs."""
@@ -319,7 +355,10 @@ def run_compute(cfg: DictConfig):
         for jd in job_dirs
     )
 
-    valid_results = [r for r in results if r is not None]
+    valid = [r for r in results if r is not None]
+    valid_results = [meta for meta, _ in valid]
+    _save_events(valid, os.path.join(HydraConfig.get().runtime.output_dir, "events.npz"))
+
     out_file = os.path.join(data_dir, "dynamics.json")
     with open(out_file, "w") as f:
         json.dump(valid_results, f, indent=2)
@@ -372,27 +411,56 @@ def run_plot(cfg: DictConfig):
     df_dyn = pd.DataFrame(dynamics_records)
     logger.info(f"Loaded dynamics records: {len(df_dyn)}")
 
-    # Merge Accuracy
-    if accuracy_records:
-        df_acc = pd.DataFrame(accuracy_records)
-        # Normalize columns: mean_accuracy or accuracy
-        if "mean_accuracy" in df_acc.columns and "accuracy" not in df_acc.columns:
-            df_acc["accuracy"] = df_acc["mean_accuracy"]
+    # Load Accuracy from results.json (matching sparsity.py logic)
+    acc_map = {}
+    if cfg.get("accuracy_path"):
+        acc_paths = cfg.get("accuracy_path")
+        if isinstance(acc_paths, str):
+            acc_paths = [acc_paths]
+        for ap in acc_paths:
+            if not os.path.isabs(ap):
+                ap = os.path.join(orig_cwd, ap)
+            if not os.path.exists(ap):
+                continue
+            with open(ap, "r") as f:
+                acc_obj = json.load(f)
+            for r in acc_obj.get("runs", []):
+                sizes = r.get("sizes", [])
+                if sizes:
+                    # Map both full source_run path and its basename (job_id)
+                    s_run = r.get("source_run", "")
+                    acc_val = sizes[0]["test_accuracy_mean"]
+                    acc_map[s_run] = acc_val
+                    acc_map[os.path.basename(s_run)] = acc_val
 
-        # Match key: sample_id or job_id
-        merge_key = "sample_id" if ("sample_id" in df_dyn.columns and "sample_id" in df_acc.columns) else "job_id"
-        df_merged = pd.merge(df_dyn, df_acc[[merge_key, "accuracy"]].drop_duplicates(subset=[merge_key]), on=merge_key, how="inner")
-        logger.info(f"Merged with accuracy on '{merge_key}': {len(df_merged)} rows")
-    else:
-        logger.warning("No accuracy data provided. Plots against accuracy will be skipped.")
-        df_merged = df_dyn
+    # Load Sparsity from sparsity.json
+    sp_map = {}
+    if cfg.get("sparsity_path"):
+        sp_records = _load_json_list(cfg.get("sparsity_path"), orig_cwd)
+        for sp in sp_records:
+            r_dir = sp.get("run_dir", "")
+            sp_map[r_dir] = sp
+            sp_map[os.path.basename(r_dir)] = sp
 
-    # Merge Sparsity if present
-    if sparsity_records and "sparsity_inter_tree" in pd.DataFrame(sparsity_records).columns:
-        df_sp = pd.DataFrame(sparsity_records)
-        merge_key_sp = "sample_id" if ("sample_id" in df_merged.columns and "sample_id" in df_sp.columns) else "job_id"
-        sp_cols = [c for c in ["sparsity_intra_tree", "sparsity_inter_tree", "mean_cable_distance"] if c in df_sp.columns]
-        df_merged = pd.merge(df_merged, df_sp[[merge_key_sp] + sp_cols].drop_duplicates(subset=[merge_key_sp]), on=merge_key_sp, how="left")
+    # Attach accuracy and sparsity to dynamics records
+    merged_rows = []
+    for d in dynamics_records:
+        r_dir = d.get("run_dir", "")
+        b_name = os.path.basename(r_dir)
+        acc = acc_map.get(r_dir, acc_map.get(b_name, None))
+        if acc is not None:
+            d["accuracy"] = acc
+
+        sp = sp_map.get(r_dir, sp_map.get(b_name, None))
+        if sp is not None:
+            d["sparsity_intra_tree"] = sp.get("intra", sp.get("sparsity_intra_tree", np.nan))
+            d["sparsity_inter_tree"] = sp.get("inter", sp.get("sparsity_inter_tree", np.nan))
+            d["mean_cable_distance"] = sp.get("mean_cable_distance", np.nan)
+
+        merged_rows.append(d)
+
+    df_merged = pd.DataFrame(merged_rows)
+    logger.info(f"Loaded {len(df_merged)} dynamics records. With accuracy: {df_merged['accuracy'].notna().sum() if 'accuracy' in df_merged.columns else 0}")
 
     # Filter valid rows
     plot_df = df_merged.dropna(subset=["dspike_slope"]).copy() if "dspike_slope" in df_merged.columns else df_merged.copy()
@@ -452,11 +520,11 @@ def run_plot(cfg: DictConfig):
             "(d) bAP Firing Rate vs Accuracy",
             "bAP Rate [Hz]", "Accuracy", color="#d62728"
         )
-        # 5. Mean Residual ER vs Accuracy
+        # 5. Mean ER (All PCs, dSpike) vs Accuracy
         _plot_scatter_corr(
-            axes[4], "mean_dspike_er_res", "accuracy",
-            "(e) Mean Residual ER (dSpike) vs Accuracy",
-            "Mean R(PC1 Excluded)", "Accuracy", color="#9467bd"
+            axes[4], "mean_dspike_er_orig", "accuracy",
+            "(e) Mean ER (All PCs, dSpike) vs Accuracy",
+            "Mean R(All PCs)", "Accuracy", color="#9467bd"
         )
     else:
         for idx in range(5):
@@ -493,6 +561,73 @@ def run_plot(cfg: DictConfig):
 
 
 # ==============================================================================
+# 5. Clusters Mode
+# ==============================================================================
+
+def run_clusters(cfg: DictConfig):
+    """R(All PCs) vs R(PC1 Excluded) of bAP and dSpike events, one panel per run, ordered by mu."""
+    orig_cwd = hydra.utils.get_original_cwd()
+    paths = cfg.events_path
+    if paths is None:
+        raise ValueError("events_path must be specified for mode=clusters")
+    if isinstance(paths, str):
+        paths = [paths]
+
+    runs = []
+    for p in paths:
+        if not os.path.isabs(p):
+            p = os.path.join(orig_cwd, p)
+        with np.load(p) as ev:
+            for i in range(len(ev["run_dir"])):
+                sel = ev["run"] == i
+                runs.append({
+                    "mu": float(ev["syn_loc_mean"][i]),
+                    "sigma": float(ev["syn_loc_std"][i]),
+                    "kind": ev["kind"][sel],
+                    "er_all": ev["er_all"][sel],
+                    "er_res": ev["er_pc1_excluded"][sel],
+                })
+
+    runs = [r for r in runs if r["sigma"] <= cfg.sigma_max]
+    runs.sort(key=lambda r: r["mu"])
+    if not runs:
+        raise ValueError(f"No runs with sigma <= {cfg.sigma_max}")
+    logger.info(f"Plotting {len(runs)} runs with sigma <= {cfg.sigma_max}")
+
+    ncols = cfg.n_cols
+    nrows = int(np.ceil(len(runs) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.0 * ncols, 2.6 * nrows), sharex=True, sharey=True, squeeze=False)
+    styles = [(0, "bAP", "tab:blue"), (1, "dSpike", "tab:orange")]
+
+    for ax, r in zip(axes.flat, runs):
+        for kind, label, color in styles:
+            sel = r["kind"] == kind
+            x, y = r["er_all"][sel], r["er_res"][sel]
+            ax.scatter(x, y, s=6, alpha=0.4, color=color, edgecolors="none", label=label)
+            if len(x) >= 2 and np.ptp(x) > 0:
+                lr = LinearRegression().fit(x.reshape(-1, 1), y)
+                x_grid = np.linspace(x.min(), x.max(), 2)
+                ax.plot(x_grid, lr.predict(x_grid.reshape(-1, 1)), color=color, linewidth=1.5)
+        n_bap = int(np.sum(r["kind"] == 0))
+        n_ds = int(np.sum(r["kind"] == 1))
+        ax.set_title(f"μ = {r['mu']:.0f} µm, σ = {r['sigma']:.0f} µm\nbAP {n_bap}, dSpike {n_ds}", fontsize=9)
+        ax.grid(True, linestyle=":", alpha=0.6)
+    for ax in axes.flat[len(runs):]:
+        ax.set_visible(False)
+    for ax in axes[-1]:
+        ax.set_xlabel("R(All PCs)")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("R(PC1 Excluded)")
+    axes[0, 0].legend(loc="upper left", fontsize=8, markerscale=3)
+
+    plt.tight_layout()
+    out_path = os.path.join(HydraConfig.get().runtime.output_dir, "clusters.png")
+    plt.savefig(out_path, dpi=200)
+    plt.close()
+    logger.info(f"Saved cluster plot to: {out_path}")
+
+
+# ==============================================================================
 # Main Entry Point
 # ==============================================================================
 
@@ -502,8 +637,10 @@ def main(cfg: DictConfig):
         run_compute(cfg)
     elif cfg.mode == "plot":
         run_plot(cfg)
+    elif cfg.mode == "clusters":
+        run_clusters(cfg)
     else:
-        raise ValueError(f"Unknown mode: {cfg.mode}. Must be 'compute' or 'plot'.")
+        raise ValueError(f"Unknown mode: {cfg.mode}. Must be 'compute', 'plot' or 'clusters'.")
 
 
 if __name__ == "__main__":
