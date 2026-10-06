@@ -1,0 +1,32 @@
+# Configuration for separation.py
+# test 試行どうしの距離から、状態と入力の Separation Property を算出する。
+defaults:
+  - _self_
+hydra:
+  job:
+    chdir: True
+
+# compute: run_dir の各ランから試行ペアの距離を計算し、Hydra のランディレクトリに
+#          summary.npz（全ラン分の要約）と pairs/<job>.npz（時刻ごとのペア距離）を書く
+# plot:    summary.npz と Accuracy・sparsity の JSON を結合して図と回帰を出す
+mode: "compute"
+
+# 対象のランのディレクトリ。グロブ可。相対パスは元の作業ディレクトリから解決する。
+run_dir: null
+
+# 計算パラメータ
+# 何サンプルおきに状態を間引くか（記録は 0.025 ms 刻みなので 40 で 1 ms）
+step: 40
+# 入力スパイク列を畳み込む指数関数の時定数 [ms]。cell1 のカルシウム減衰（cacum.mod の tau）に合わせる
+tau_ms: 100.0
+n_jobs: 12
+
+# plot の入力
+summary_path: null
+accuracy_path: null
+sparsity_path: null
+# 時刻ごとのペア距離を描くランの pairs/<job>.npz（任意）
+pairs_path: null
+# 時間経過の図に描くランの σ の上限 [µm]
+sigma_max: 100.0
+n_cols: 6
