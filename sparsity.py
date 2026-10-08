@@ -339,6 +339,116 @@ def run_plot(cfg, original_cwd):
     plt.close(fig)
 
 
+def _r_squared(columns, y, quadratic=False):
+    """Least-squares R² of y on two columns, linear or full quadratic, with intercept."""
+    a, b = columns
+    x = np.column_stack([a, b, a ** 2, b ** 2, a * b] if quadratic else [a, b])
+    design = np.column_stack([np.ones(len(y)), x])
+    coef, *_ = np.linalg.lstsq(design, y, rcond=None)
+    residual = y - design @ coef
+    return float(1.0 - residual @ residual / np.sum((y - y.mean()) ** 2))
+
+
+def run_by_size(cfg, original_cwd):
+    """How the sparsity–accuracy relation changes with the number of readout sites k.
+
+    accuracy_path holds readout_subset results with several subset sizes; each
+    size gives one marginalised accuracy per run, joined to sparsity by run_dir.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from hydra.core.hydra_config import HydraConfig
+    from omegaconf import ListConfig
+    from scipy.stats import pearsonr
+
+    def as_list(paths):
+        return list(paths) if isinstance(paths, (list, ListConfig)) else [paths]
+
+    def resolve(path):
+        return path if os.path.isabs(path) else os.path.join(original_cwd, path)
+
+    sparsity = {}
+    for p in as_list(cfg.sparsity_path):
+        with open(resolve(p)) as f:
+            for rec in json.load(f):
+                sparsity[rec["run_dir"]] = rec
+    accuracy = {}  # run_dir -> {k: accuracy}
+    for p in as_list(cfg.accuracy_path):
+        with open(resolve(p)) as f:
+            for run in json.load(f)["runs"]:
+                accuracy[run["source_run"]] = {s["num_readout_sites"]: s["test_accuracy_mean"]
+                                               for s in run["sizes"]}
+
+    runs = sorted(d for d in accuracy if d in sparsity)
+    sizes = sorted({k for d in runs for k in accuracy[d]})
+    runs = [d for d in runs if all(k in accuracy[d] for k in sizes)]
+    logger.info(f"{len(runs)} runs with sparsity and accuracy at k = {sizes}")
+
+    intra = np.array([sparsity[d]["intra"] for d in runs])
+    inter = np.array([sparsity[d]["inter"] for d in runs])
+    acc = {k: np.array([accuracy[d][k] for d in runs]) for k in sizes}
+
+    stats = {"num_runs": len(runs), "by_size": {}}
+    for k in sizes:
+        a = acc[k]
+        stats["by_size"][str(k)] = {
+            "accuracy_mean": float(a.mean()), "accuracy_sd": float(a.std()),
+            "accuracy_min": float(a.min()), "accuracy_max": float(a.max()),
+            "fraction_at_or_above_0.9": float(np.mean(a >= 0.9)),
+            "r_intra": float(pearsonr(intra, a)[0]), "r_inter": float(pearsonr(inter, a)[0]),
+            "r2_linear": _r_squared((intra, inter), a),
+            "r2_quadratic": _r_squared((intra, inter), a, quadratic=True),
+        }
+    out_dir = HydraConfig.get().runtime.output_dir
+    with open(os.path.join(out_dir, "results.json"), "w") as f:
+        json.dump(stats, f, indent=2)
+    logger.info(json.dumps(stats, indent=2))
+
+    # Top: S_intra against accuracy at each k. Bottom: the summaries across k.
+    fig = plt.figure(figsize=(3.2 * len(sizes), 7.2))
+    grid = fig.add_gridspec(2, len(sizes), height_ratios=[1, 1])
+    for i, k in enumerate(sizes):
+        ax = fig.add_subplot(grid[0, i])
+        ax.scatter(intra, acc[k], s=12, alpha=0.7, c=inter, cmap="Oranges", edgecolors="k", linewidth=0.2)
+        s = stats["by_size"][str(k)]
+        ax.set_title(f"k = {k}\nr(S_intra) = {s['r_intra']:+.2f}", fontsize=9)
+        ax.set_xlabel("S_intra [µm]")
+        if i == 0:
+            ax.set_ylabel("Accuracy")
+        ax.set_ylim(0, 1)
+        ax.grid(True, linestyle=":", alpha=0.6)
+    third = max(1, len(sizes) // 3)
+    ax = fig.add_subplot(grid[1, :third])
+    ax.boxplot([acc[k] for k in sizes], labels=[str(k) for k in sizes])
+    ax.set_xlabel("k (readout sites)")
+    ax.set_ylabel("Accuracy")
+    ax.set_title("Accuracy across runs", fontsize=9)
+    ax = fig.add_subplot(grid[1, third:2 * third])
+    ax.plot(sizes, [stats["by_size"][str(k)]["r_intra"] for k in sizes], "o-", label="r(S_intra, Acc)")
+    ax.plot(sizes, [stats["by_size"][str(k)]["r_inter"] for k in sizes], "s-", label="r(S_inter, Acc)")
+    ax.set_xscale("log")
+    ax.set_xticks(sizes, [str(k) for k in sizes])
+    ax.set_xlabel("k (readout sites)")
+    ax.set_title("Correlation with accuracy", fontsize=9)
+    ax.legend(fontsize=8)
+    ax.grid(True, linestyle=":", alpha=0.6)
+    ax = fig.add_subplot(grid[1, 2 * third:])
+    ax.plot(sizes, [stats["by_size"][str(k)]["r2_linear"] for k in sizes], "o-", label="linear")
+    ax.plot(sizes, [stats["by_size"][str(k)]["r2_quadratic"] for k in sizes], "s-", label="quadratic")
+    ax.set_xscale("log")
+    ax.set_xticks(sizes, [str(k) for k in sizes])
+    ax.set_xlabel("k (readout sites)")
+    ax.set_title("R² of accuracy on (S_intra, S_inter)", fontsize=9)
+    ax.legend(fontsize=8)
+    ax.grid(True, linestyle=":", alpha=0.6)
+    fig.tight_layout()
+    path = os.path.join(out_dir, "sparsity_by_readout_size.png")
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    logger.info(f"Saved {path}")
+
+
 @hydra.main(version_base=None, config_path="conf", config_name="sparsity")
 def main(cfg: DictConfig):
     from hydra.utils import get_original_cwd
@@ -346,6 +456,9 @@ def main(cfg: DictConfig):
 
     if cfg.mode == "plot":
         run_plot(cfg, original_cwd)
+        return
+    if cfg.mode == "by_size":
+        run_by_size(cfg, original_cwd)
         return
 
     patterns = [cfg.run_dir] if isinstance(cfg.run_dir, str) else list(cfg.run_dir)
