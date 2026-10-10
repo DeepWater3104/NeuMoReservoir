@@ -75,6 +75,7 @@ def get_spike_indices(
     t: np.ndarray,
     v_threshold: float = -30.0,
     exclusion_window_ms: float = 10.0,
+    merge_ms: float = 0.0,
 ):
     """Detect bAP and dSpike timestamps using vectorized NumPy operations.
 
@@ -82,6 +83,13 @@ def get_spike_indices(
     t: shape (T,)
     v_threshold: spike threshold in mV
     exclusion_window_ms: window around bAP to exclude localized spikes
+    merge_ms: a dSpike detection less than this after the previous one is taken
+        as the same dSpike, keeping the first time step. One dSpike crosses the
+        threshold in neighbouring compartments a few time steps apart, and each
+        of those steps would otherwise count as a separate event.
+
+    Returns the bAP indices, the dSpike indices, and the number of dSpike
+    detections before merging.
     """
     dt = float(t[1] - t[0])
     mean_vm = np.mean(vm, axis=1)
@@ -106,7 +114,13 @@ def get_spike_indices(
         min_dist_to_bap = np.min(diffs, axis=1)
         dspike_indices = all_local_spikes[min_dist_to_bap >= exclusion_samples]
 
-    return bap_indices, dspike_indices
+    num_unmerged = len(dspike_indices)
+    merge_samples = int(np.round(merge_ms / dt))
+    if merge_samples > 0 and len(dspike_indices) > 1:
+        keep = np.r_[True, np.diff(dspike_indices) >= merge_samples]
+        dspike_indices = dspike_indices[keep]
+
+    return bap_indices, dspike_indices, num_unmerged
 
 
 # ==============================================================================
@@ -119,6 +133,7 @@ def process_single_run(
     v_threshold: float = -30.0,
     exclusion_window_ms: float = 10.0,
     test_only: bool = True,
+    merge_ms: float = 0.0,
 ):
     """Extract spikes, calculate Effective Rank, and compute slope metrics for one run."""
     job_dir = os.path.abspath(job_dir)
@@ -155,6 +170,11 @@ def process_single_run(
     meta["job_id"] = os.path.basename(job_dir)
     meta["run_dir"] = job_dir
 
+    # Somatic firing rate as the simulation wrote it: somatic spikes over all
+    # training and test trials divided by their total duration.
+    rate_path = os.path.join(job_dir, "data", "firing_rate.txt")
+    meta["soma_rate"] = float(open(rate_path).read().strip()) if os.path.exists(rate_path) else None
+
     # Find buffer files
     buffer_pattern = os.path.join(job_dir, "data", "buffer*.npz")
     all_buffers = sorted(glob.glob(buffer_pattern))
@@ -177,6 +197,7 @@ def process_single_run(
     # Per-event raw values: (kind, trial, t_ms, er_all, er_pc1_excluded); kind 0 = bAP, 1 = dSpike
     events = []
     total_duration_s = 0.0
+    dspike_count_unmerged = 0
 
     for bf in buffers_to_process:
         trial = int(os.path.basename(bf)[len("buffer"):-len(".npz")])
@@ -202,9 +223,11 @@ def process_single_run(
         total_duration_s += float(t[-1] - t[0]) / 1000.0
 
         # Detect spikes
-        bap_idxs, dspike_idxs = get_spike_indices(
-            vm, t, v_threshold=v_threshold, exclusion_window_ms=exclusion_window_ms
+        bap_idxs, dspike_idxs, num_unmerged = get_spike_indices(
+            vm, t, v_threshold=v_threshold, exclusion_window_ms=exclusion_window_ms,
+            merge_ms=merge_ms,
         )
+        dspike_count_unmerged += num_unmerged
 
         # PCA: separate PC1 (global wave) from localized dynamics
         try:
@@ -243,6 +266,7 @@ def process_single_run(
     meta["total_duration_s"] = total_duration_s
     meta["bap_count"] = len(bap_er_pairs)
     meta["dspike_count"] = len(dspike_er_pairs)
+    meta["dspike_count_unmerged"] = dspike_count_unmerged
     meta["bap_rate"] = float(len(bap_er_pairs) / total_duration_s) if total_duration_s > 0 else 0.0
     meta["dspike_rate"] = float(len(dspike_er_pairs) / total_duration_s) if total_duration_s > 0 else 0.0
 
@@ -351,6 +375,7 @@ def run_compute(cfg: DictConfig):
             v_threshold=v_threshold,
             exclusion_window_ms=exclusion_window_ms,
             test_only=test_only,
+            merge_ms=cfg.get("merge_ms", 0.0),
         )
         for jd in job_dirs
     )
@@ -561,7 +586,115 @@ def run_plot(cfg: DictConfig):
 
 
 # ==============================================================================
-# 5. Clusters Mode
+# 5. Rates Mode
+# ==============================================================================
+
+def _ols(columns, y):
+    """Least-squares fit with intercept. Returns (R², coefficients without intercept)."""
+    design = np.column_stack([np.ones(len(y))] + list(columns))
+    coef, *_ = np.linalg.lstsq(design, y, rcond=None)
+    residual = y - design @ coef
+    return float(1.0 - residual @ residual / np.sum((y - y.mean()) ** 2)), coef[1:]
+
+
+def _quadratic(a, b):
+    return [a, b, a ** 2, b ** 2, a * b]
+
+
+def run_rates(cfg: DictConfig):
+    """Somatic, bAP and dSpike firing rates against accuracy and sparsity.
+
+    Reports, for each rate M, the three conditions for M to carry the effect of
+    sparsity on accuracy: M explained by sparsity, M related to accuracy, and the
+    sparsity coefficients shrinking once M joins sparsity as a predictor.
+    """
+    orig_cwd = hydra.utils.get_original_cwd()
+    out_dir = HydraConfig.get().runtime.output_dir
+
+    dynamics = {d["run_dir"]: d for d in _load_json_list(cfg.dynamics_path, orig_cwd)}
+    sparsity = {r["run_dir"]: r for r in _load_json_list(cfg.sparsity_path, orig_cwd)}
+    accuracy = {}
+    for p in ([cfg.accuracy_path] if isinstance(cfg.accuracy_path, str) else list(cfg.accuracy_path)):
+        with open(p if os.path.isabs(p) else os.path.join(orig_cwd, p)) as f:
+            for run in json.load(f)["runs"]:
+                for size in run["sizes"]:
+                    if size["num_readout_sites"] == cfg.subset_size:
+                        accuracy[run["source_run"]] = size["test_accuracy_mean"]
+
+    runs = sorted(d for d in dynamics if d in sparsity and d in accuracy
+                  and dynamics[d].get("soma_rate") is not None)
+    logger.info(f"Runs: {len(dynamics)} with dynamics, {len(runs)} joined with sparsity and accuracy (k = {cfg.subset_size})")
+
+    acc = np.array([accuracy[d] for d in runs])
+    intra = np.array([sparsity[d]["intra"] for d in runs])
+    inter = np.array([sparsity[d]["inter"] for d in runs])
+    mu = np.array([sparsity[d]["syn_loc_mean"] for d in runs])
+    sigma = np.array([sparsity[d]["syn_loc_std"] for d in runs])
+    rates = {
+        "soma": np.array([dynamics[d]["soma_rate"] for d in runs]),
+        "bap": np.array([dynamics[d]["bap_rate"] for d in runs]),
+        "dspike": np.array([dynamics[d]["dspike_rate"] for d in runs]),
+    }
+
+    def z(x):
+        return (x - x.mean()) / x.std()
+
+    r2_sparsity, coef_sparsity = _ols([z(intra), z(inter)], acc)
+    r2_sparsity_quad, _ = _ols(_quadratic(intra, inter), acc)
+    stats = {
+        "num_runs": len(runs),
+        "subset_size": cfg.subset_size,
+        "dspike_count_total": int(sum(dynamics[d]["dspike_count"] for d in runs)),
+        "dspike_count_unmerged_total": int(sum(dynamics[d].get("dspike_count_unmerged", 0) for d in runs)),
+        "bap_count_total": int(sum(dynamics[d]["bap_count"] for d in runs)),
+        "acc_on_sparsity": {"r2_linear": r2_sparsity, "r2_quadratic": r2_sparsity_quad,
+                            "std_coef_intra": float(coef_sparsity[0]), "std_coef_inter": float(coef_sparsity[1])},
+        "rates": {},
+    }
+    for name, m in rates.items():
+        r2_with, coef_with = _ols([z(intra), z(inter), z(m)], acc)
+        r2_with_quad, _ = _ols(_quadratic(intra, inter) + [m], acc)
+        stats["rates"][name] = {
+            "min": float(m.min()), "median": float(np.median(m)), "max": float(m.max()),
+            "r_acc": float(pearsonr(m, acc)[0]),
+            "acc_on_rate_r2": _ols([m], acc)[0],
+            "rate_on_sparsity_r2_linear": _ols([intra, inter], m)[0],
+            "rate_on_sparsity_r2_quadratic": _ols(_quadratic(intra, inter), m)[0],
+            "rate_on_mu_sigma_r2_linear": _ols([mu, sigma], m)[0],
+            "rate_on_mu_sigma_r2_quadratic": _ols(_quadratic(mu, sigma), m)[0],
+            "acc_on_sparsity_plus_rate_r2_linear": r2_with,
+            "acc_on_sparsity_plus_rate_r2_quadratic": r2_with_quad,
+            "std_coef_intra_with_rate": float(coef_with[0]),
+            "std_coef_inter_with_rate": float(coef_with[1]),
+            "std_coef_rate": float(coef_with[2]),
+        }
+    with open(os.path.join(out_dir, "results.json"), "w") as f:
+        json.dump(stats, f, indent=2)
+    logger.info(json.dumps(stats, indent=2))
+
+    labels = {"soma": "Somatic rate [Hz]", "bap": "bAP rate [Hz]", "dspike": "dSpike rate [Hz]"}
+    fig, axes = plt.subplots(3, 3, figsize=(14, 12))
+    for row, (name, m) in enumerate(rates.items()):
+        for col, (x, y, xl, yl) in enumerate((
+                (m, acc, labels[name], "Accuracy"),
+                (intra, m, "S_intra [µm]", labels[name]),
+                (inter, m, "S_inter [µm]", labels[name]))):
+            ax = axes[row, col]
+            r, p = pearsonr(x, y)
+            ax.scatter(x, y, s=16, alpha=0.7, color="#4c72b0", edgecolors="k", linewidth=0.3)
+            ax.set_title(f"r = {r:+.3f} (p = {p:.1e})", fontsize=10)
+            ax.set_xlabel(xl)
+            ax.set_ylabel(yl)
+            ax.grid(True, linestyle=":", alpha=0.6)
+    fig.tight_layout()
+    path = os.path.join(out_dir, "rates.png")
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    logger.info(f"Saved {path}")
+
+
+# ==============================================================================
+# 6. Clusters Mode
 # ==============================================================================
 
 def run_clusters(cfg: DictConfig):
@@ -639,8 +772,10 @@ def main(cfg: DictConfig):
         run_plot(cfg)
     elif cfg.mode == "clusters":
         run_clusters(cfg)
+    elif cfg.mode == "rates":
+        run_rates(cfg)
     else:
-        raise ValueError(f"Unknown mode: {cfg.mode}. Must be 'compute', 'plot' or 'clusters'.")
+        raise ValueError(f"Unknown mode: {cfg.mode}. Must be 'compute', 'plot', 'clusters' or 'rates'.")
 
 
 if __name__ == "__main__":
