@@ -172,8 +172,10 @@ def process_single_run(
 
     # Somatic firing rate as the simulation wrote it: somatic spikes over all
     # training and test trials divided by their total duration.
+    # Runs cut short leave the file empty; they get None and drop out of the rates.
     rate_path = os.path.join(job_dir, "data", "firing_rate.txt")
-    meta["soma_rate"] = float(open(rate_path).read().strip()) if os.path.exists(rate_path) else None
+    rate_text = open(rate_path).read().strip() if os.path.exists(rate_path) else ""
+    meta["soma_rate"] = float(rate_text) if rate_text else None
 
     # Find buffer files
     buffer_pattern = os.path.join(job_dir, "data", "buffer*.npz")
