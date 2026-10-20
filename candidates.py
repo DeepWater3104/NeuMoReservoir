@@ -494,7 +494,7 @@ def plot_comparison_summary(all_results, out_path):
         ax_b.set_ylabel(r"Accuracy $R^2$ fraction", fontsize=11)
         ax_b.set_title(f"(b) Accuracy $R^2$ decomposition ({model})", fontsize=12, fontweight="bold")
         ax_b.set_xticks(x_pos)
-        ax_b.set_xticklabels([f"{c}\n(N={all_results[c]['n_runs']})" for c in cand_names], fontsize=9.5, rotation=15, ha="right")
+        ax_b.set_xticklabels([f"{c}\n(N={all_results[c]['n_runs']})" for c in cand_names], fontsize=9, rotation=35, ha="right")
         ax_b.grid(True, linestyle=":", alpha=0.6, axis="y")
     axes[0, 1].legend(loc="upper right", ncol=4, fontsize=9.5, framealpha=0.9)
     axes[1, 1].legend(loc="upper right", ncol=3, fontsize=9.5, framealpha=0.9)
