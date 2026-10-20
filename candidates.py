@@ -177,7 +177,7 @@ def decompose_accuracy_r2(s_intra, s_inter, cand, accuracy, quadratic=False):
     
     1. unique_sparsity: R²(both) - R²(cand)
     2. unique_cand: R²(both) - R²(sparsity)
-    3. common (mediated): R²(sparsity) + R²(cand) - R²(both)
+    3. common: R²(sparsity) + R²(cand) - R²(both)
     4. unexplained: 1 - R²(both)
     """
     cols_sp = build_sparsity_design(s_intra, s_inter, quadratic=quadratic)
@@ -424,9 +424,9 @@ def plot_candidate_figure(cand_name, cand_label, cand_values, s_intra, s_inter, 
     h_g = 0.35
     bg = np.zeros(2)
 
-    ax_g.barh(y_pos_g, u_sp_g, height=h_g, left=bg, label="(1) Sparsity unique (unmediated)", color="#dd8452", edgecolor="k", linewidth=0.5)
+    ax_g.barh(y_pos_g, u_sp_g, height=h_g, left=bg, label="(1) Sparsity unique (not captured by candidate)", color="#dd8452", edgecolor="k", linewidth=0.5)
     bg += np.array(u_sp_g)
-    ax_g.barh(y_pos_g, med_g, height=h_g, left=bg, label="(3) Common (mediated by candidate)", color="#4c72b0", edgecolor="k", linewidth=0.5)
+    ax_g.barh(y_pos_g, med_g, height=h_g, left=bg, label="(3) Common (sparsity effect captured by candidate)", color="#4c72b0", edgecolor="k", linewidth=0.5)
     bg += np.array(med_g)
     ax_g.barh(y_pos_g, u_cand_g, height=h_g, left=bg, label="(2) Candidate unique (independent)", color="#55a868", edgecolor="k", linewidth=0.5)
     bg += np.array(u_cand_g)
@@ -437,8 +437,8 @@ def plot_candidate_figure(cand_name, cand_label, cand_values, s_intra, s_inter, 
     ax_g.set_xlabel(r"Accuracy $R^2$ fraction", fontsize=10.5)
     ax_g.set_xlim(0, 1.0)
     ax_g.set_title(f"(g) Accuracy $R^2$ Decomposition: Sparsity vs {cand_name} (Commonality Analysis)\n"
-                   f"Linear: Both $R^2={acc_decomp_lin['r2_both']:.3f}$ (Med={acc_decomp_lin['common']:.3f}, Unmed={acc_decomp_lin['unique_sparsity']:.3f}) | "
-                   f"Quad: Both $R^2={acc_decomp_quad['r2_both']:.3f}$ (Med={acc_decomp_quad['common']:.3f}, Unmed={acc_decomp_quad['unique_sparsity']:.3f})",
+                   f"Linear: Both $R^2={acc_decomp_lin['r2_both']:.3f}$ (Common={acc_decomp_lin['common']:.3f}, Sparsity unique={acc_decomp_lin['unique_sparsity']:.3f}) | "
+                   f"Quad: Both $R^2={acc_decomp_quad['r2_both']:.3f}$ (Common={acc_decomp_quad['common']:.3f}, Sparsity unique={acc_decomp_quad['unique_sparsity']:.3f})",
                    fontsize=11)
     ax_g.legend(loc="upper right", bbox_to_anchor=(1.0, 1.35), ncol=2, fontsize=9.5, framealpha=0.9)
     ax_g.grid(True, linestyle=":", alpha=0.6, axis="x")
@@ -502,9 +502,9 @@ def plot_comparison_summary(all_results, out_path):
     un_acc = [all_results[c]["accuracy_decomp_quadratic"]["unexplained"] for c in cand_names]
 
     bg = np.zeros(len(cand_names))
-    ax_b.bar(x_pos, u_sp, width, bottom=bg, label="(1) Sparsity unique (unmediated)", color="#dd8452", edgecolor="k", linewidth=0.5)
+    ax_b.bar(x_pos, u_sp, width, bottom=bg, label="(1) Sparsity unique (not captured by candidate)", color="#dd8452", edgecolor="k", linewidth=0.5)
     bg += np.array(u_sp)
-    ax_b.bar(x_pos, med, width, bottom=bg, label="(3) Common (mediated by candidate)", color="#4c72b0", edgecolor="k", linewidth=0.5)
+    ax_b.bar(x_pos, med, width, bottom=bg, label="(3) Common (sparsity effect captured by candidate)", color="#4c72b0", edgecolor="k", linewidth=0.5)
     bg += np.array(med)
     ax_b.bar(x_pos, u_cand, width, bottom=bg, label="(2) Candidate unique (independent)", color="#55a868", edgecolor="k", linewidth=0.5)
     bg += np.array(u_cand)
@@ -522,7 +522,7 @@ def plot_comparison_summary(all_results, out_path):
     baseline_quad_r2 = all_results[cand_names[0]]["accuracy_decomp_quadratic"]["r2_sparsity"]
     ax_b.axhline(baseline_quad_r2, color="k", linestyle="--", lw=1.2, alpha=0.7, label=f"Baseline Sparsity Quad $R^2={baseline_quad_r2:.3f}$")
 
-    fig.suptitle("Comparison of All 9 Dynamics Candidates Mediating Sparsity to Accuracy", fontsize=13, fontweight="bold", y=0.99)
+    fig.suptitle("Comparison of 9 Dynamics Candidates: Accuracy R² Shared with Sparsity", fontsize=13, fontweight="bold", y=0.99)
     fig.tight_layout()
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
