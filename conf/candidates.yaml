@@ -1,0 +1,19 @@
+# Configuration for candidates.py
+# ダイナミクスの候補量ごとに、sparsity の影響をどれだけ捉え、Accuracy をどれだけ説明するかを、同じ図と同じ数値で比べる。
+# 計算し直しはせず、保存済みの出力を run_dir で結合する。
+defaults:
+  - _self_
+hydra:
+  job:
+    chdir: True
+
+# 出力（results.json と図）は、実行ごとに Hydra が作るランディレクトリ outputs/<日付>/<時刻>/ に書く
+
+# 入力。相対パスは元の作業ディレクトリから解決する
+sparsity_path: null    # sparsity.py の sparsity.json（リスト可）
+accuracy_path: null    # readout_subset.py の results.json（リスト可）
+separation_path: null  # separation.py の summary（.npz、リスト可）。SR に使う
+dynamics_path: null    # dynamics.py の dynamics.json（リスト可）。発火率と実効ランクの平均に使う
+
+# Accuracy に使う readout の点数 k（readout_subset の results.json の中から選ぶ）
+subset_size: 100
