@@ -9,11 +9,22 @@ hydra:
 
 # 出力（results.json と図）は、実行ごとに Hydra が作るランディレクトリ outputs/<日付>/<時刻>/ に書く
 
-# 入力。相対パスは元の作業ディレクトリから解決する
-sparsity_path: null    # sparsity.py の sparsity.json（リスト可）
-accuracy_path: null    # readout_subset.py の results.json（リスト可）
-separation_path: null  # separation.py の summary（.npz、リスト可）。SR に使う
-dynamics_path: null    # dynamics.py の dynamics.json（リスト可）。発火率と実効ランクの平均に使う
+# 入力。相対パスは元の作業ディレクトリから解決する。デフォルトは sweep200 (caracal + oncilla)
+sparsity_path:
+  - "data/2026-09-30_sweep200/caracal/sparsity.json"
+  - "data/2026-09-30_sweep200/oncilla/sparsity.json"
+
+accuracy_path:
+  - "data/2026-09-30_sweep200/caracal/results.json"
+  - "data/2026-09-30_sweep200/oncilla/results.json"
+
+separation_path:
+  - "data/2026-10-06-separation/caracal.npz"
+  - "data/2026-10-06-separation/oncilla.npz"
+
+dynamics_path:
+  - "data/2026-10-11-rates/caracal.json"
+  - "data/2026-10-11-rates/oncilla.json"
 
 # Accuracy に使う readout の点数 k（readout_subset の results.json の中から選ぶ）
 subset_size: 100

@@ -11,14 +11,9 @@ run_dir: null
 
 # 出力（dynamics.json、events.npz、図）は、実行ごとに Hydra が作るランディレクトリ outputs/<日付>/<時刻>/ に書く
 
-# compute: run_dir から算出して dynamics.json を書く
-# plot:    保存済みの dynamics.json, results.json, sparsity.json を読んで図を描く
+# compute: run_dir から算出して dynamics.json と events.npz を書く
 # clusters: 保存済みの events.npz を読んで発火ごとの散布図を描く
-# rates:    保存済みの dynamics.json を Accuracy・sparsity と結合して発火率の図を描く
 mode: "compute"
-dynamics_path: null
-accuracy_path: null
-sparsity_path: null
 
 # 計算パラメータ
 window_ms: 5.0
@@ -39,7 +34,4 @@ n_cols: 6
 # 1回の dSpike で隣り合う区画が少しずつずれた時間ステップに閾値を越え、別々に数えられるのを防ぐ。0 でまとめない
 merge_ms: 2.0
 
-# rates: compute の dynamics.json（dynamics_path）を、Accuracy（accuracy_path）と sparsity（sparsity_path）に結合し、
-#        細胞体・bAP・dSpike の発火率と Accuracy・sparsity の関係を描く
-# Accuracy に使う readout の点数 k（readout_subset の results.json の中から選ぶ）
-subset_size: 100
+

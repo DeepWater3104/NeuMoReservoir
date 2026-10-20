@@ -16,11 +16,12 @@ A run without a value for a candidate (e.g. ER with fewer than 2 events) is left
 of that candidate only.
 
 Usage:
+    # Run with default inputs configured in conf/candidates.yaml:
+    uv run python candidates.py
+
+    # Override paths if needed:
     uv run python candidates.py \\
-        'sparsity_path=[data/2026-09-30_sweep200/caracal/sparsity.json,data/2026-09-30_sweep200/oncilla/sparsity.json]' \\
-        'accuracy_path=[data/2026-09-30_sweep200/caracal/results.json,data/2026-09-30_sweep200/oncilla/results.json]' \\
-        'separation_path=[data/2026-10-06-separation/caracal.npz,data/2026-10-06-separation/oncilla.npz]' \\
-        'dynamics_path=[data/2026-10-11-rates/caracal.json,data/2026-10-11-rates/oncilla.json]'
+        'sparsity_path=[data/2026-09-30_sweep200/caracal/sparsity.json,data/2026-09-30_sweep200/oncilla/sparsity.json]'
 """
 
 import json
@@ -215,6 +216,46 @@ def decompose_accuracy_r2(s_intra, s_inter, cand, accuracy, quadratic=False):
 
 RAMPS = {"mu": "Blues", "sigma": "Oranges", "accuracy": "Purples"}
 
+# S_intra goes with sigma (orange) and S_inter with mu (blue), as in the scatter
+# panels; the four accuracy parts take hues that appear nowhere else.
+SPARSITY_PARTS = (
+    ("unique_intra", r"$S_{\mathrm{intra}}$ unique", "#dd8452"),
+    ("unique_inter", r"$S_{\mathrm{inter}}$ unique", "#4c72b0"),
+    ("common", "Common", "#9c755f"),
+    ("unexplained", "Unexplained", "#cccccc"),
+)
+ACCURACY_PARTS = (
+    ("unique_sparsity", "(1) Sparsity effect not captured by candidate", "#c49c94"),
+    ("common", "(3) Sparsity effect captured by candidate", "#2a9d8f"),
+    ("unique_candidate", "(2) Candidate, unrelated to sparsity", "#e9c46a"),
+    ("unexplained", "(4) Unexplained", "#cccccc"),
+)
+
+
+def stacked_bars(ax, positions, decomps, parts, width, horizontal):
+    """Stack the parts of each decomposition. A negative part (shared variance can
+    fall below zero when predictors suppress each other) is drawn hatched on the
+    other side of zero so that no segment overlaps another; the positive parts then
+    add up to more than 1. Returns the lowest and highest extents."""
+    pos_base = np.zeros(len(positions))
+    neg_base = np.zeros(len(positions))
+    for key, label, colour in parts:
+        vals = np.array([d[key] for d in decomps], dtype=float)
+        up = np.where(vals > 0, vals, 0.0)
+        down = np.where(vals < 0, vals, 0.0)
+        style = dict(edgecolor="k", linewidth=0.5, color=colour)
+        if horizontal:
+            ax.barh(positions, up, height=width, left=pos_base, label=label, **style)
+            if np.any(down < 0):
+                ax.barh(positions, down, height=width, left=neg_base, hatch="//", **style)
+        else:
+            ax.bar(positions, up, width, bottom=pos_base, label=label, **style)
+            if np.any(down < 0):
+                ax.bar(positions, down, width, bottom=neg_base, hatch="//", **style)
+        pos_base += up
+        neg_base += down
+    return float(neg_base.min()), float(pos_base.max())
+
 def shade(values, ramp):
     cmap = plt.get_cmap(ramp)
     span = max(1e-9, values.max() - values.min())
@@ -258,28 +299,14 @@ def plot_baseline_figure(s_intra, s_inter, mu, sigma, accuracy, out_path):
     decomp_quad = decompose_sparsity_on_candidate(s_intra, s_inter, accuracy, quadratic=True)
 
     categories = ["Linear", "Quadratic"]
-    u_intra = [decomp_lin["unique_intra"], decomp_quad["unique_intra"]]
-    u_inter = [decomp_lin["unique_inter"], decomp_quad["unique_inter"]]
-    com = [decomp_lin["common"], decomp_quad["common"]]
-    unexp = [decomp_lin["unexplained"], decomp_quad["unexplained"]]
-
     ax = axes[1, 1]
     y_pos = np.arange(len(categories))
-    h = 0.45
-
-    b1 = np.zeros(2)
-    ax.barh(y_pos, u_intra, height=h, left=b1, label=r"$S_{\mathrm{intra}}$ unique", color="#4c72b0", edgecolor="k", linewidth=0.5)
-    b1 += np.array(u_intra)
-    ax.barh(y_pos, u_inter, height=h, left=b1, label=r"$S_{\mathrm{inter}}$ unique", color="#dd8452", edgecolor="k", linewidth=0.5)
-    b1 += np.array(u_inter)
-    ax.barh(y_pos, com, height=h, left=b1, label="Common", color="#8172b2", edgecolor="k", linewidth=0.5)
-    b1 += np.array(com)
-    ax.barh(y_pos, unexp, height=h, left=b1, label="Unexplained", color="#cccccc", edgecolor="k", linewidth=0.5)
+    low, high = stacked_bars(ax, y_pos, [decomp_lin, decomp_quad], SPARSITY_PARTS, 0.45, horizontal=True)
 
     ax.set_yticks(y_pos)
     ax.set_yticklabels(categories, fontsize=10)
     ax.set_xlabel(r"$R^2$ fraction", fontsize=11)
-    ax.set_xlim(0, 1.0)
+    ax.set_xlim(min(0.0, low) - 0.02, max(1.0, high) + 0.02)
     ax.set_title(f"(d) Accuracy $R^2$ Decomposition\nLinear $R^2={decomp_lin['r2_full']:.3f}$, Quad $R^2={decomp_quad['r2_full']:.3f}$", fontsize=11)
     ax.legend(loc="upper right", fontsize=9, framealpha=0.9)
     ax.grid(True, linestyle=":", alpha=0.6, axis="x")
@@ -352,25 +379,12 @@ def plot_candidate_figure(cand_name, cand_label, cand_values, s_intra, s_inter, 
     # (d) Candidate R² decomposition by Sparsity
     ax_d = fig.add_subplot(gs[1, 0])
     cats = ["Linear", "Quadratic"]
-    u_in = [sp_on_cand_lin["unique_intra"], sp_on_cand_quad["unique_intra"]]
-    u_out = [sp_on_cand_lin["unique_inter"], sp_on_cand_quad["unique_inter"]]
-    c_sp = [sp_on_cand_lin["common"], sp_on_cand_quad["common"]]
-    un_sp = [sp_on_cand_lin["unexplained"], sp_on_cand_quad["unexplained"]]
-
     y_pos = np.arange(len(cats))
-    h = 0.4
-    b = np.zeros(2)
-    ax_d.barh(y_pos, u_in, height=h, left=b, label=r"$S_{\mathrm{intra}}$ unique", color="#4c72b0", edgecolor="k", linewidth=0.5)
-    b += np.array(u_in)
-    ax_d.barh(y_pos, u_out, height=h, left=b, label=r"$S_{\mathrm{inter}}$ unique", color="#dd8452", edgecolor="k", linewidth=0.5)
-    b += np.array(u_out)
-    ax_d.barh(y_pos, c_sp, height=h, left=b, label="Common", color="#8172b2", edgecolor="k", linewidth=0.5)
-    b += np.array(c_sp)
-    ax_d.barh(y_pos, un_sp, height=h, left=b, label="Unexplained", color="#cccccc", edgecolor="k", linewidth=0.5)
+    low, high = stacked_bars(ax_d, y_pos, [sp_on_cand_lin, sp_on_cand_quad], SPARSITY_PARTS, 0.4, horizontal=True)
     ax_d.set_yticks(y_pos)
     ax_d.set_yticklabels(cats, fontsize=9.5)
     ax_d.set_xlabel(r"$R^2$ fraction", fontsize=10)
-    ax_d.set_xlim(0, 1.0)
+    ax_d.set_xlim(min(0.0, low) - 0.02, max(1.0, high) + 0.02)
     ax_d.set_title(f"(d) {cand_name} $R^2$ from Sparsity\nLin $R^2={sp_on_cand_lin['r2_full']:.3f}$, Quad $R^2={sp_on_cand_quad['r2_full']:.3f}$", fontsize=10.5)
     ax_d.legend(loc="upper right", fontsize=8.5, framealpha=0.9)
     ax_d.grid(True, linestyle=":", alpha=0.6, axis="x")
@@ -415,32 +429,17 @@ def plot_candidate_figure(cand_name, cand_label, cand_values, s_intra, s_inter, 
     # (g) Accuracy R² 4-way decomposition (Commonality analysis)
     ax_g = fig.add_subplot(gs[2, :])
     cats_g = ["Linear", "Quadratic"]
-    u_sp_g = [acc_decomp_lin["unique_sparsity"], acc_decomp_quad["unique_sparsity"]]
-    u_cand_g = [acc_decomp_lin["unique_candidate"], acc_decomp_quad["unique_candidate"]]
-    med_g = [acc_decomp_lin["common"], acc_decomp_quad["common"]]
-    un_g = [acc_decomp_lin["unexplained"], acc_decomp_quad["unexplained"]]
-
     y_pos_g = np.arange(len(cats_g))
-    h_g = 0.35
-    bg = np.zeros(2)
-
-    ax_g.barh(y_pos_g, u_sp_g, height=h_g, left=bg, label="(1) Sparsity unique (not captured by candidate)", color="#dd8452", edgecolor="k", linewidth=0.5)
-    bg += np.array(u_sp_g)
-    ax_g.barh(y_pos_g, med_g, height=h_g, left=bg, label="(3) Common (sparsity effect captured by candidate)", color="#4c72b0", edgecolor="k", linewidth=0.5)
-    bg += np.array(med_g)
-    ax_g.barh(y_pos_g, u_cand_g, height=h_g, left=bg, label="(2) Candidate unique (independent)", color="#55a868", edgecolor="k", linewidth=0.5)
-    bg += np.array(u_cand_g)
-    ax_g.barh(y_pos_g, un_g, height=h_g, left=bg, label="(4) Unexplained residual", color="#cccccc", edgecolor="k", linewidth=0.5)
-
+    low, high = stacked_bars(ax_g, y_pos_g, [acc_decomp_lin, acc_decomp_quad], ACCURACY_PARTS, 0.35, horizontal=True)
     ax_g.set_yticks(y_pos_g)
     ax_g.set_yticklabels(cats_g, fontsize=10)
     ax_g.set_xlabel(r"Accuracy $R^2$ fraction", fontsize=10.5)
-    ax_g.set_xlim(0, 1.0)
+    ax_g.set_xlim(min(0.0, low) - 0.02, max(1.0, high) + 0.02)
     ax_g.set_title(f"(g) Accuracy $R^2$ Decomposition: Sparsity vs {cand_name} (Commonality Analysis)\n"
                    f"Linear: Both $R^2={acc_decomp_lin['r2_both']:.3f}$ (Common={acc_decomp_lin['common']:.3f}, Sparsity unique={acc_decomp_lin['unique_sparsity']:.3f}) | "
                    f"Quad: Both $R^2={acc_decomp_quad['r2_both']:.3f}$ (Common={acc_decomp_quad['common']:.3f}, Sparsity unique={acc_decomp_quad['unique_sparsity']:.3f})",
                    fontsize=11)
-    ax_g.legend(loc="upper right", bbox_to_anchor=(1.0, 1.35), ncol=2, fontsize=9.5, framealpha=0.9)
+    ax_g.legend(loc="upper center", bbox_to_anchor=(0.5, -0.28), ncol=4, fontsize=9.5, framealpha=0.9)
     ax_g.grid(True, linestyle=":", alpha=0.6, axis="x")
 
     fig.suptitle(f"Dynamics Candidate: {cand_name} ($N={n_runs}$)", fontsize=13, fontweight="bold", y=0.99)
@@ -467,62 +466,41 @@ def plot_candidate_figure(cand_name, cand_label, cand_values, s_intra, s_inter, 
 # ==============================================================================
 
 def plot_comparison_summary(all_results, out_path):
-    fig, axes = plt.subplots(2, 1, figsize=(14, 11), sharex=True)
+    """Both decompositions for every candidate, linear and quadratic side by side.
+
+    The reference for (b) is each candidate's own sparsity-only R², drawn as a short
+    line on its bar: candidates missing a run are fitted on fewer runs, so their
+    sparsity-only R² differs from the others'.
+    """
     cand_names = list(all_results.keys())
     x_pos = np.arange(len(cand_names))
     width = 0.55
+    fig, axes = plt.subplots(2, 2, figsize=(22, 12), sharex=True)
+    for col, model in enumerate(("linear", "quadratic")):
+        ax_a, ax_b = axes[0, col], axes[1, col]
+        low, high = stacked_bars(ax_a, x_pos, [all_results[c][f"sparsity_on_candidate_{model}"] for c in cand_names],
+                                 SPARSITY_PARTS, width, horizontal=False)
+        ax_a.set_ylim(min(0.0, low) - 0.02, max(1.0, high) + 0.05)
+        ax_a.set_ylabel(r"Candidate $R^2$ fraction", fontsize=11)
+        ax_a.set_title(f"(a) Sparsity explaining each candidate ({model})", fontsize=12, fontweight="bold")
+        ax_a.grid(True, linestyle=":", alpha=0.6, axis="y")
 
-    # (a) Sparsity R² on Candidate (Quadratic)
-    ax_a = axes[0]
-    u_in = [all_results[c]["sparsity_on_candidate_quadratic"]["unique_intra"] for c in cand_names]
-    u_out = [all_results[c]["sparsity_on_candidate_quadratic"]["unique_inter"] for c in cand_names]
-    com_sp = [all_results[c]["sparsity_on_candidate_quadratic"]["common"] for c in cand_names]
-    un_sp = [all_results[c]["sparsity_on_candidate_quadratic"]["unexplained"] for c in cand_names]
+        acc_decomps = [all_results[c][f"accuracy_decomp_{model}"] for c in cand_names]
+        low, high = stacked_bars(ax_b, x_pos, acc_decomps, ACCURACY_PARTS, width, horizontal=False)
+        for x, d in zip(x_pos, acc_decomps):
+            ax_b.hlines(d["r2_sparsity"], x - width / 2 - 0.08, x + width / 2 + 0.08, colors="k", linestyles="--", lw=1.4)
+        ax_b.plot([], [], "k--", lw=1.4, label="Sparsity-only $R^2$ (same runs)")
+        ax_b.set_ylim(min(0.0, low) - 0.02, max(1.0, high) + 0.05)
+        ax_b.set_ylabel(r"Accuracy $R^2$ fraction", fontsize=11)
+        ax_b.set_title(f"(b) Accuracy $R^2$ decomposition ({model})", fontsize=12, fontweight="bold")
+        ax_b.set_xticks(x_pos)
+        ax_b.set_xticklabels([f"{c}\n(N={all_results[c]['n_runs']})" for c in cand_names], fontsize=9.5, rotation=15, ha="right")
+        ax_b.grid(True, linestyle=":", alpha=0.6, axis="y")
+    axes[0, 1].legend(loc="upper right", ncol=4, fontsize=9.5, framealpha=0.9)
+    axes[1, 1].legend(loc="upper right", ncol=3, fontsize=9.5, framealpha=0.9)
 
-    b = np.zeros(len(cand_names))
-    ax_a.bar(x_pos, u_in, width, bottom=b, label=r"$S_{\mathrm{intra}}$ unique", color="#4c72b0", edgecolor="k", linewidth=0.5)
-    b += np.array(u_in)
-    ax_a.bar(x_pos, u_out, width, bottom=b, label=r"$S_{\mathrm{inter}}$ unique", color="#dd8452", edgecolor="k", linewidth=0.5)
-    b += np.array(u_out)
-    ax_a.bar(x_pos, com_sp, width, bottom=b, label="Common", color="#8172b2", edgecolor="k", linewidth=0.5)
-    b += np.array(com_sp)
-    ax_a.bar(x_pos, un_sp, width, bottom=b, label="Unexplained", color="#cccccc", edgecolor="k", linewidth=0.5)
-
-    ax_a.set_ylabel(r"Candidate $R^2$ fraction", fontsize=11)
-    ax_a.set_ylim(0, 1.05)
-    ax_a.set_title("(a) Sparsity Explaining Each Dynamics Candidate ($R^2$ Decomposition, Quadratic)", fontsize=12, fontweight="bold")
-    ax_a.legend(loc="upper right", ncol=4, fontsize=9.5, framealpha=0.9)
-    ax_a.grid(True, linestyle=":", alpha=0.6, axis="y")
-
-    # (b) Accuracy R² 4-way decomposition (Quadratic)
-    ax_b = axes[1]
-    u_sp = [all_results[c]["accuracy_decomp_quadratic"]["unique_sparsity"] for c in cand_names]
-    med = [all_results[c]["accuracy_decomp_quadratic"]["common"] for c in cand_names]
-    u_cand = [all_results[c]["accuracy_decomp_quadratic"]["unique_candidate"] for c in cand_names]
-    un_acc = [all_results[c]["accuracy_decomp_quadratic"]["unexplained"] for c in cand_names]
-
-    bg = np.zeros(len(cand_names))
-    ax_b.bar(x_pos, u_sp, width, bottom=bg, label="(1) Sparsity unique (not captured by candidate)", color="#dd8452", edgecolor="k", linewidth=0.5)
-    bg += np.array(u_sp)
-    ax_b.bar(x_pos, med, width, bottom=bg, label="(3) Common (sparsity effect captured by candidate)", color="#4c72b0", edgecolor="k", linewidth=0.5)
-    bg += np.array(med)
-    ax_b.bar(x_pos, u_cand, width, bottom=bg, label="(2) Candidate unique (independent)", color="#55a868", edgecolor="k", linewidth=0.5)
-    bg += np.array(u_cand)
-    ax_b.bar(x_pos, un_acc, width, bottom=bg, label="(4) Unexplained residual", color="#cccccc", edgecolor="k", linewidth=0.5)
-
-    ax_b.set_ylabel(r"Accuracy $R^2$ fraction", fontsize=11)
-    ax_b.set_ylim(0, 1.05)
-    ax_b.set_title("(b) Accuracy $R^2$ 4-Way Decomposition across Candidates (Commonality Analysis, Quadratic)", fontsize=12, fontweight="bold")
-    ax_b.set_xticks(x_pos)
-    ax_b.set_xticklabels([f"{c}\n(N={all_results[c]['n_runs']})" for c in cand_names], fontsize=9.5, rotation=15, ha="right")
-    ax_b.legend(loc="upper right", ncol=2, fontsize=9.5, framealpha=0.9)
-    ax_b.grid(True, linestyle=":", alpha=0.6, axis="y")
-
-    # Add reference line for baseline sparsity R²
-    baseline_quad_r2 = all_results[cand_names[0]]["accuracy_decomp_quadratic"]["r2_sparsity"]
-    ax_b.axhline(baseline_quad_r2, color="k", linestyle="--", lw=1.2, alpha=0.7, label=f"Baseline Sparsity Quad $R^2={baseline_quad_r2:.3f}$")
-
-    fig.suptitle("Comparison of 9 Dynamics Candidates: Accuracy R² Shared with Sparsity", fontsize=13, fontweight="bold", y=0.99)
+    fig.suptitle(f"Comparison of {len(cand_names)} dynamics candidates: accuracy $R^2$ shared with sparsity",
+                 fontsize=13, fontweight="bold", y=0.995)
     fig.tight_layout()
     fig.savefig(out_path, dpi=200)
     plt.close(fig)

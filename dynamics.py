@@ -31,7 +31,6 @@ import zipfile
 import hydra
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from joblib import Parallel, delayed
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
@@ -275,37 +274,19 @@ def process_single_run(
     meta["bap_rate"] = float(len(bap_er_pairs) / total_duration_s) if total_duration_s > 0 else 0.0
     meta["dspike_rate"] = float(len(dspike_er_pairs) / total_duration_s) if total_duration_s > 0 else 0.0
 
-    # Fit dSpike slope
+    # Mean Effective Rank around spike events; left undefined below two events, as in
+    # the dynamics.json files the analyses so far were drawn from.
     if len(dspike_er_pairs) >= 2:
-        x_d = np.array([p[0] for p in dspike_er_pairs]).reshape(-1, 1)
-        y_d = np.array([p[1] for p in dspike_er_pairs])
-        lr_d = LinearRegression().fit(x_d, y_d)
-        meta["dspike_slope"] = float(lr_d.coef_[0])
-        meta["dspike_intercept"] = float(lr_d.intercept_)
-        meta["dspike_r2"] = float(lr_d.score(x_d, y_d))
-        meta["mean_dspike_er_orig"] = float(np.mean(x_d))
-        meta["mean_dspike_er_res"] = float(np.mean(y_d))
+        meta["mean_dspike_er_orig"] = float(np.mean([p[0] for p in dspike_er_pairs]))
+        meta["mean_dspike_er_res"] = float(np.mean([p[1] for p in dspike_er_pairs]))
     else:
-        meta["dspike_slope"] = np.nan
-        meta["dspike_intercept"] = np.nan
-        meta["dspike_r2"] = np.nan
         meta["mean_dspike_er_orig"] = np.nan
         meta["mean_dspike_er_res"] = np.nan
 
-    # Fit bAP slope
     if len(bap_er_pairs) >= 2:
-        x_b = np.array([p[0] for p in bap_er_pairs]).reshape(-1, 1)
-        y_b = np.array([p[1] for p in bap_er_pairs])
-        lr_b = LinearRegression().fit(x_b, y_b)
-        meta["bap_slope"] = float(lr_b.coef_[0])
-        meta["bap_intercept"] = float(lr_b.intercept_)
-        meta["bap_r2"] = float(lr_b.score(x_b, y_b))
-        meta["mean_bap_er_orig"] = float(np.mean(x_b))
-        meta["mean_bap_er_res"] = float(np.mean(y_b))
+        meta["mean_bap_er_orig"] = float(np.mean([p[0] for p in bap_er_pairs]))
+        meta["mean_bap_er_res"] = float(np.mean([p[1] for p in bap_er_pairs]))
     else:
-        meta["bap_slope"] = np.nan
-        meta["bap_intercept"] = np.nan
-        meta["bap_r2"] = np.nan
         meta["mean_bap_er_orig"] = np.nan
         meta["mean_bap_er_res"] = np.nan
 
@@ -393,293 +374,15 @@ def run_compute(cfg: DictConfig):
     logger.info(f"Results saved to: {out_file}")
 
 
-# ==============================================================================
-# 4. Plot Mode
-# ==============================================================================
-
-def _load_json_list(paths, orig_cwd):
-    """Load JSON from a single string path or list of paths, resolving relatives."""
-    if paths is None:
-        return []
-    if isinstance(paths, str):
-        paths = [paths]
-    records = []
-    for p in paths:
-        if not os.path.isabs(p):
-            p = os.path.join(orig_cwd, p)
-        if not os.path.exists(p):
-            logger.warning(f"File not found: {p}")
-            continue
-        with open(p, "r") as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            records.extend(data)
-        elif isinstance(data, dict):
-            # If accuracy results dict with 'results' key
-            if "results" in data and isinstance(data["results"], list):
-                records.extend(data["results"])
-            else:
-                records.append(data)
-    return records
 
 
-def run_plot(cfg: DictConfig):
-    """Merge dynamics, accuracy, and sparsity to evaluate APCCAS relationships."""
-    orig_cwd = hydra.utils.get_original_cwd()
 
-    dynamics_records = _load_json_list(cfg.get("dynamics_path"), orig_cwd)
-    accuracy_records = _load_json_list(cfg.get("accuracy_path"), orig_cwd)
-    sparsity_records = _load_json_list(cfg.get("sparsity_path"), orig_cwd)
 
-    if not dynamics_records:
-        raise ValueError("No dynamics data found. Specify dynamics_path.")
 
-    df_dyn = pd.DataFrame(dynamics_records)
-    logger.info(f"Loaded dynamics records: {len(df_dyn)}")
-
-    # Load Accuracy from results.json (matching sparsity.py logic)
-    acc_map = {}
-    if cfg.get("accuracy_path"):
-        acc_paths = cfg.get("accuracy_path")
-        if isinstance(acc_paths, str):
-            acc_paths = [acc_paths]
-        for ap in acc_paths:
-            if not os.path.isabs(ap):
-                ap = os.path.join(orig_cwd, ap)
-            if not os.path.exists(ap):
-                continue
-            with open(ap, "r") as f:
-                acc_obj = json.load(f)
-            for r in acc_obj.get("runs", []):
-                sizes = r.get("sizes", [])
-                if sizes:
-                    s_run = r.get("source_run", "")
-                    acc_val = sizes[0]["test_accuracy_mean"]
-                    acc_map[s_run] = acc_val
-
-    # Load Sparsity from sparsity.json
-    sp_map = {}
-    if cfg.get("sparsity_path"):
-        sp_records = _load_json_list(cfg.get("sparsity_path"), orig_cwd)
-        for sp in sp_records:
-            r_dir = sp.get("run_dir", "")
-            sp_map[r_dir] = sp
-
-    # Attach accuracy and sparsity to dynamics records
-    merged_rows = []
-    for d in dynamics_records:
-        r_dir = d.get("run_dir", "")
-        acc = acc_map.get(r_dir, None)
-        if acc is not None:
-            d["accuracy"] = acc
-
-        sp = sp_map.get(r_dir, None)
-        if sp is not None:
-            d["sparsity_intra_tree"] = sp.get("intra", sp.get("sparsity_intra_tree", np.nan))
-            d["sparsity_inter_tree"] = sp.get("inter", sp.get("sparsity_inter_tree", np.nan))
-            d["mean_cable_distance"] = sp.get("mean_cable_distance", np.nan)
-
-        merged_rows.append(d)
-
-    df_merged = pd.DataFrame(merged_rows)
-    logger.info(f"Loaded {len(df_merged)} dynamics records. With accuracy: {df_merged['accuracy'].notna().sum() if 'accuracy' in df_merged.columns else 0}")
-
-    # Filter valid rows
-    plot_df = df_merged.dropna(subset=["dspike_slope"]).copy() if "dspike_slope" in df_merged.columns else df_merged.copy()
-    logger.info(f"Valid rows for dynamic slope analysis: {len(plot_df)}")
-
-    # Setup 2x3 Figure
-    fig, axes = plt.subplots(2, 3, figsize=(16, 10))
-    axes = axes.flatten()
-
-    def _plot_scatter_corr(ax, x_col, y_col, title, x_label, y_label, color="teal"):
-        sub = plot_df.dropna(subset=[x_col, y_col])
-        if len(sub) < 3:
-            ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center")
-            ax.set_title(title)
-            return
-
-        x = sub[x_col].values
-        y = sub[y_col].values
-        r, p = pearsonr(x, y)
-
-        # Linear fit line
-        model = LinearRegression().fit(x.reshape(-1, 1), y)
-        x_grid = np.linspace(np.min(x), np.max(x), 100)
-        y_grid = model.predict(x_grid.reshape(-1, 1))
-
-        ax.scatter(x, y, alpha=0.6, color=color, edgecolors="k", linewidth=0.5, s=35)
-        ax.plot(x_grid, y_grid, color="crimson", linestyle="--", linewidth=1.8, label=f"Fit (R² = {r**2:.3f})")
-
-        ax.set_title(f"{title}\n$r = {r:+.3f}$ ($p = {p:.1e}$)", fontsize=11, fontweight="bold")
-        ax.set_xlabel(x_label, fontsize=10)
-        ax.set_ylabel(y_label, fontsize=10)
-        ax.grid(True, linestyle="--", alpha=0.5)
-        ax.legend(loc="best", fontsize=9)
-
-    # 1. dSpike slope vs Accuracy (The APCCAS Key Claim)
-    if "accuracy" in plot_df.columns:
-        _plot_scatter_corr(
-            axes[0], "dspike_slope", "accuracy",
-            "(a) dSpike Slope vs Accuracy (APCCAS Target)",
-            "dSpike Slope (R_PC1_res / R_all)", "Accuracy", color="#1f77b4"
-        )
-        # 2. bAP slope vs Accuracy
-        _plot_scatter_corr(
-            axes[1], "bap_slope", "accuracy",
-            "(b) bAP Slope vs Accuracy",
-            "bAP Slope", "Accuracy", color="#2ca02c"
-        )
-        # 3. dSpike rate vs Accuracy
-        _plot_scatter_corr(
-            axes[2], "dspike_rate", "accuracy",
-            "(c) dSpike Firing Rate vs Accuracy",
-            "dSpike Rate [Hz]", "Accuracy", color="#ff7f0e"
-        )
-        # 4. bAP rate vs Accuracy
-        _plot_scatter_corr(
-            axes[3], "bap_rate", "accuracy",
-            "(d) bAP Firing Rate vs Accuracy",
-            "bAP Rate [Hz]", "Accuracy", color="#d62728"
-        )
-        # 5. Mean ER (All PCs, dSpike) vs Accuracy
-        _plot_scatter_corr(
-            axes[4], "mean_dspike_er_orig", "accuracy",
-            "(e) Mean ER (All PCs, dSpike) vs Accuracy",
-            "Mean R(All PCs)", "Accuracy", color="#9467bd"
-        )
-    else:
-        for idx in range(5):
-            axes[idx].text(0.5, 0.5, "No Accuracy Data", ha="center", va="center")
-
-    # 6. Inter-branch Sparsity vs dSpike slope (Chain: Sparsity -> Dynamics)
-    if "sparsity_inter_tree" in plot_df.columns:
-        _plot_scatter_corr(
-            axes[5], "sparsity_inter_tree", "dspike_slope",
-            "(f) Inter-Branch Sparsity vs dSpike Slope",
-            "S_inter (Tree Backtrack Distance) [µm]", "dSpike Slope", color="#8c564b"
-        )
-    else:
-        axes[5].text(0.5, 0.5, "No Sparsity Data", ha="center", va="center")
-
-    plt.tight_layout()
-
-    out_path = os.path.join(HydraConfig.get().runtime.output_dir, "dynamics_overview.png")
-    plt.savefig(out_path, dpi=300)
-    plt.close()
-    logger.info(f"Saved dynamics overview plot to: {out_path}")
 
 
 # ==============================================================================
-# 5. Rates Mode
-# ==============================================================================
-
-def _ols(columns, y):
-    """Least-squares fit with intercept. Returns (R², coefficients without intercept)."""
-    design = np.column_stack([np.ones(len(y))] + list(columns))
-    coef, *_ = np.linalg.lstsq(design, y, rcond=None)
-    residual = y - design @ coef
-    return float(1.0 - residual @ residual / np.sum((y - y.mean()) ** 2)), coef[1:]
-
-
-def _quadratic(a, b):
-    return [a, b, a ** 2, b ** 2, a * b]
-
-
-def run_rates(cfg: DictConfig):
-    """Somatic, bAP and dSpike firing rates against accuracy and sparsity.
-
-    Reports, for each rate M, the three conditions for M to carry the effect of
-    sparsity on accuracy: M explained by sparsity, M related to accuracy, and the
-    sparsity coefficients shrinking once M joins sparsity as a predictor.
-    """
-    orig_cwd = hydra.utils.get_original_cwd()
-    out_dir = HydraConfig.get().runtime.output_dir
-
-    dynamics = {d["run_dir"]: d for d in _load_json_list(cfg.dynamics_path, orig_cwd)}
-    sparsity = {r["run_dir"]: r for r in _load_json_list(cfg.sparsity_path, orig_cwd)}
-    accuracy = {}
-    for p in ([cfg.accuracy_path] if isinstance(cfg.accuracy_path, str) else list(cfg.accuracy_path)):
-        with open(p if os.path.isabs(p) else os.path.join(orig_cwd, p)) as f:
-            for run in json.load(f)["runs"]:
-                for size in run["sizes"]:
-                    if size["num_readout_sites"] == cfg.subset_size:
-                        accuracy[run["source_run"]] = size["test_accuracy_mean"]
-
-    runs = sorted(d for d in dynamics if d in sparsity and d in accuracy
-                  and dynamics[d].get("soma_rate") is not None)
-    logger.info(f"Runs: {len(dynamics)} with dynamics, {len(runs)} joined with sparsity and accuracy (k = {cfg.subset_size})")
-
-    acc = np.array([accuracy[d] for d in runs])
-    intra = np.array([sparsity[d]["intra"] for d in runs])
-    inter = np.array([sparsity[d]["inter"] for d in runs])
-    mu = np.array([sparsity[d]["syn_loc_mean"] for d in runs])
-    sigma = np.array([sparsity[d]["syn_loc_std"] for d in runs])
-    rates = {
-        "soma": np.array([dynamics[d]["soma_rate"] for d in runs]),
-        "bap": np.array([dynamics[d]["bap_rate"] for d in runs]),
-        "dspike": np.array([dynamics[d]["dspike_rate"] for d in runs]),
-    }
-
-    def z(x):
-        return (x - x.mean()) / x.std()
-
-    r2_sparsity, coef_sparsity = _ols([z(intra), z(inter)], acc)
-    r2_sparsity_quad, _ = _ols(_quadratic(intra, inter), acc)
-    stats = {
-        "num_runs": len(runs),
-        "subset_size": cfg.subset_size,
-        "dspike_count_total": int(sum(dynamics[d]["dspike_count"] for d in runs)),
-        "dspike_count_unmerged_total": int(sum(dynamics[d].get("dspike_count_unmerged", 0) for d in runs)),
-        "bap_count_total": int(sum(dynamics[d]["bap_count"] for d in runs)),
-        "acc_on_sparsity": {"r2_linear": r2_sparsity, "r2_quadratic": r2_sparsity_quad,
-                            "std_coef_intra": float(coef_sparsity[0]), "std_coef_inter": float(coef_sparsity[1])},
-        "rates": {},
-    }
-    for name, m in rates.items():
-        r2_with, coef_with = _ols([z(intra), z(inter), z(m)], acc)
-        r2_with_quad, _ = _ols(_quadratic(intra, inter) + [m], acc)
-        stats["rates"][name] = {
-            "min": float(m.min()), "median": float(np.median(m)), "max": float(m.max()),
-            "r_acc": float(pearsonr(m, acc)[0]),
-            "acc_on_rate_r2": _ols([m], acc)[0],
-            "rate_on_sparsity_r2_linear": _ols([intra, inter], m)[0],
-            "rate_on_sparsity_r2_quadratic": _ols(_quadratic(intra, inter), m)[0],
-            "rate_on_mu_sigma_r2_linear": _ols([mu, sigma], m)[0],
-            "rate_on_mu_sigma_r2_quadratic": _ols(_quadratic(mu, sigma), m)[0],
-            "acc_on_sparsity_plus_rate_r2_linear": r2_with,
-            "acc_on_sparsity_plus_rate_r2_quadratic": r2_with_quad,
-            "std_coef_intra_with_rate": float(coef_with[0]),
-            "std_coef_inter_with_rate": float(coef_with[1]),
-            "std_coef_rate": float(coef_with[2]),
-        }
-    with open(os.path.join(out_dir, "results.json"), "w") as f:
-        json.dump(stats, f, indent=2)
-    logger.info(json.dumps(stats, indent=2))
-
-    labels = {"soma": "Somatic rate [Hz]", "bap": "bAP rate [Hz]", "dspike": "dSpike rate [Hz]"}
-    fig, axes = plt.subplots(3, 3, figsize=(14, 12))
-    for row, (name, m) in enumerate(rates.items()):
-        for col, (x, y, xl, yl) in enumerate((
-                (m, acc, labels[name], "Accuracy"),
-                (intra, m, "S_intra [µm]", labels[name]),
-                (inter, m, "S_inter [µm]", labels[name]))):
-            ax = axes[row, col]
-            r, p = pearsonr(x, y)
-            ax.scatter(x, y, s=16, alpha=0.7, color="#4c72b0", edgecolors="k", linewidth=0.3)
-            ax.set_title(f"r = {r:+.3f} (p = {p:.1e})", fontsize=10)
-            ax.set_xlabel(xl)
-            ax.set_ylabel(yl)
-            ax.grid(True, linestyle=":", alpha=0.6)
-    fig.tight_layout()
-    path = os.path.join(out_dir, "rates.png")
-    fig.savefig(path, dpi=200)
-    plt.close(fig)
-    logger.info(f"Saved {path}")
-
-
-# ==============================================================================
-# 6. Clusters Mode
+# 4. Clusters Mode
 # ==============================================================================
 
 def run_clusters(cfg: DictConfig):
@@ -753,14 +456,10 @@ def run_clusters(cfg: DictConfig):
 def main(cfg: DictConfig):
     if cfg.mode == "compute":
         run_compute(cfg)
-    elif cfg.mode == "plot":
-        run_plot(cfg)
     elif cfg.mode == "clusters":
         run_clusters(cfg)
-    elif cfg.mode == "rates":
-        run_rates(cfg)
     else:
-        raise ValueError(f"Unknown mode: {cfg.mode}. Must be 'compute', 'plot', 'clusters' or 'rates'.")
+        raise ValueError(f"Unknown mode: {cfg.mode}. Must be 'compute' or 'clusters'.")
 
 
 if __name__ == "__main__":
