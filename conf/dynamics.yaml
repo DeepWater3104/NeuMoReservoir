@@ -1,37 +1,57 @@
 # Configuration for dynamics.py
-# 生波形から実効ランク（Effective Rank）およびスパイク動態指標を算出する。
+# 生波形から、ダイナミクスの量を target ごとに計算する。
 defaults:
   - _self_
 hydra:
   job:
     chdir: True
 
-# 対象のランのディレクトリ。グロブ可。相対パスは元の作業ディレクトリから解決する。
-run_dir: null
+# 出力は、実行ごとに Hydra が作るランディレクトリ outputs/<日付>/<時刻>/ に書く
 
-# 出力（dynamics.json、events.npz、図）は、実行ごとに Hydra が作るランディレクトリ outputs/<日付>/<時刻>/ に書く
-
-# compute: run_dir から算出して dynamics.json と events.npz を書く
-# clusters: 保存済みの events.npz を読んで発火ごとの散布図を描く
+# mode=compute, target=
+#   rates               bAP と dSpike を検出して発火率を出す。細胞体の発火率は firing_rate.txt から読む  -> rates.json
+#   effective_rank      bAP と dSpike の時刻のまわりのカルシウムの実効ランク                          -> effective_rank.json, events.npz
+#   separation          試行ペアの状態距離と入力距離、SR                                              -> summary.npz, results.json, pairs/<ラン>.npz
+#   compartment_spikes  区画ごとの膜電位の閾値越えの時刻（bAP 由来かどうかの印つき）                  -> compartment_spikes.npz
+#   consistency         compartment_spikes の出力から、試行ペアの発火の一致（Γ）                       -> consistency.json, consistency_pairs.npz
+# mode=plot, target=
+#   clusters            events.npz から、発火ごとの実効ランクの散布図
+#   separation          summary.npz と Accuracy・sparsity から、状態距離の図
 mode: "compute"
+target: null
 
-# 計算パラメータ
-window_ms: 5.0
-v_threshold: -30.0
-exclusion_window_ms: 10.0
-test_only: true
+# 対象のランのディレクトリ（mode=compute の rates / effective_rank / separation / compartment_spikes）。
+# グロブ可。相対パスは元の作業ディレクトリから解決する。
+run_dir: null
 n_jobs: 12
-force: false
 
-# clusters: compute が Hydra のランディレクトリに書いた events.npz を読み、
-#           ランごとに R(All PCs) vs R(PC1 Excluded) を μ の順に並べて描く
-events_path: null
-# σ がこの値 [µm] 以下のランだけを描く（σ が大きいと μ の違いが薄まるため）
-sigma_max: 100.0
-n_cols: 6
-
-# 同じ試行の中で、前の dSpike の検出からこの時間 [ms] 未満の検出は同じ1回の dSpike とみなす（最初の時刻を残す）。
-# 1回の dSpike で隣り合う区画が少しずつずれた時間ステップに閾値を越え、別々に数えられるのを防ぐ。0 でまとめない
+# 発火の検出（rates / effective_rank / compartment_spikes）
+v_threshold: -30.0
+# bAP の前後のこの幅 [ms] の局所発火は dSpike にせず、区画ごとの発火では bAP 由来とする
+exclusion_window_ms: 10.0
+# 同じ試行の中で、前の dSpike の検出からこの時間 [ms] 未満の検出は同じ1回の dSpike とみなす（最初の時刻を残す）。0 でまとめない
 merge_ms: 2.0
 
+# effective_rank: 発火時刻のまわりの窓の幅 [ms]
+window_ms: 5.0
 
+# separation: 何サンプルおきに状態を間引くか（記録は 0.025 ms 刻みなので 40 で 1 ms）
+step: 40
+# separation: 入力スパイク列を畳み込む指数関数の時定数 [ms]。cell1 のカルシウム減衰（cacum.mod の tau）に合わせる
+tau_ms: 100.0
+
+# consistency: compartment_spikes が書いた compartment_spikes.npz（リスト可）と、一致とみなす許容幅 [ms]
+spikes_path: null
+delta_ms: 5.0
+
+# plot clusters: effective_rank が書いた events.npz（リスト可）
+events_path: null
+# plot separation: separation が書いた summary.npz、readout_subset の results.json、sparsity の sparsity.json（いずれもリスト可）
+summary_path: null
+accuracy_path: null
+sparsity_path: null
+# plot separation: 時刻ごとのペア距離を描くランの pairs/<ラン>.npz（任意）
+pairs_path: null
+# plot: σ がこの値 [µm] 以下のランだけを並べる
+sigma_max: 100.0
+n_cols: 6

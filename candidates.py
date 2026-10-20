@@ -11,6 +11,8 @@ joined by run_dir; nothing is recomputed. Candidates:
 7. Mean bAP ER (All PCs)
 8. bAP rate x mean bAP ER
 9. dSpike rate x mean dSpike ER
+10. Within-class consistency of bAP-related compartment spikes
+11. Within-class consistency of the other compartment spikes
 
 A run without a value for a candidate (e.g. ER with fewer than 2 events) is left out
 of that candidate only.
@@ -64,7 +66,10 @@ def _value(x):
     return float(x) if x is not None and not np.isnan(x) else np.nan
 
 
-DYNAMICS_KEYS = ("soma_rate", "bap_rate", "dspike_rate", "mean_dspike_er_orig", "mean_bap_er_orig")
+# Read from any of the dynamics.py outputs listed in dynamics_path (rates.json,
+# effective_rank.json, consistency.json), joined by run_dir.
+DYNAMICS_KEYS = ("soma_rate", "bap_rate", "dspike_rate", "mean_dspike_er_orig", "mean_bap_er_orig",
+                 "gamma_within_bap", "gamma_within_dsp")
 
 
 def load_merged_data(cfg, orig_cwd):
@@ -103,7 +108,8 @@ def load_merged_data(cfg, orig_cwd):
                 rd = item["run_dir"]
                 if rd in runs:
                     for k in DYNAMICS_KEYS:
-                        runs[rd][k] = _value(item.get(k))
+                        if k in item:
+                            runs[rd][k] = _value(item[k])
 
     valid_runs = [d for d in runs.values() if "accuracy" in d and "sparsity" in d]
     for d in valid_runs:
@@ -256,12 +262,6 @@ def stacked_bars(ax, positions, decomps, parts, width, horizontal):
         neg_base += down
     return float(neg_base.min()), float(pos_base.max())
 
-def shade(values, ramp):
-    cmap = plt.get_cmap(ramp)
-    span = max(1e-9, values.max() - values.min())
-    return cmap(0.25 + 0.75 * (values - values.min()) / span)
-
-
 # ==============================================================================
 # 4. Baseline Figure
 # ==============================================================================
@@ -271,7 +271,7 @@ def plot_baseline_figure(s_intra, s_inter, mu, sigma, accuracy, out_path):
     
     # (a) S_intra vs Accuracy
     r_intra, p_intra = pearsonr(s_intra, accuracy)
-    axes[0, 0].scatter(s_intra, accuracy, s=24, alpha=0.8, c=shade(sigma, RAMPS["sigma"]), edgecolors="k", linewidth=0.3)
+    axes[0, 0].scatter(s_intra, accuracy, s=24, color="#dd8452", edgecolors="k", linewidth=0.3)
     axes[0, 0].set_xlabel(r"$S_{\mathrm{intra}}$ [$\mu\mathrm{m}$]", fontsize=11)
     axes[0, 0].set_ylabel("Accuracy", fontsize=11)
     axes[0, 0].set_title(f"(a) $S_{{\\mathrm{{intra}}}}$ vs Accuracy\n$r = {r_intra:+.3f}$ ($p = {p_intra:.1e}$)", fontsize=11)
@@ -279,14 +279,14 @@ def plot_baseline_figure(s_intra, s_inter, mu, sigma, accuracy, out_path):
 
     # (b) S_inter vs Accuracy
     r_inter, p_inter = pearsonr(s_inter, accuracy)
-    axes[0, 1].scatter(s_inter, accuracy, s=24, alpha=0.8, c=shade(mu, RAMPS["mu"]), edgecolors="k", linewidth=0.3)
+    axes[0, 1].scatter(s_inter, accuracy, s=24, color="#4c72b0", edgecolors="k", linewidth=0.3)
     axes[0, 1].set_xlabel(r"$S_{\mathrm{inter}}$ [$\mu\mathrm{m}$]", fontsize=11)
     axes[0, 1].set_ylabel("Accuracy", fontsize=11)
     axes[0, 1].set_title(f"(b) $S_{{\\mathrm{{inter}}}}$ vs Accuracy\n$r = {r_inter:+.3f}$ ($p = {p_inter:.1e}$)", fontsize=11)
     axes[0, 1].grid(True, linestyle=":", alpha=0.6)
 
     # (c) S_intra x S_inter plane with Accuracy
-    sc = axes[1, 0].scatter(s_intra, s_inter, s=28, alpha=0.85, c=accuracy, cmap=RAMPS["accuracy"], edgecolors="k", linewidth=0.3)
+    sc = axes[1, 0].scatter(s_intra, s_inter, s=28, c=accuracy, cmap=RAMPS["accuracy"], edgecolors="k", linewidth=0.3)
     axes[1, 0].set_xlabel(r"$S_{\mathrm{intra}}$ [$\mu\mathrm{m}$]", fontsize=11)
     axes[1, 0].set_ylabel(r"$S_{\mathrm{inter}}$ [$\mu\mathrm{m}$]", fontsize=11)
     axes[1, 0].set_title("(c) Sparsity Plane coloured by Accuracy", fontsize=11)
@@ -351,7 +351,7 @@ def plot_candidate_figure(cand_name, cand_label, cand_values, s_intra, s_inter, 
     # (a) S_intra vs Candidate
     ax_a = fig.add_subplot(gs[0, 0])
     r_a, p_a = pearsonr(s_in, cand)
-    ax_a.scatter(s_in, cand, s=20, alpha=0.8, c=shade(s, RAMPS["sigma"]), edgecolors="k", linewidth=0.3)
+    ax_a.scatter(s_in, cand, s=20, color="#dd8452", edgecolors="k", linewidth=0.3)
     ax_a.set_xlabel(r"$S_{\mathrm{intra}}$ [$\mu\mathrm{m}$]", fontsize=10)
     ax_a.set_ylabel(cand_label, fontsize=10)
     ax_a.set_title(f"(a) $S_{{\\mathrm{{intra}}}}$ vs {cand_name}\n$r = {r_a:+.3f}$ ($p = {p_a:.1e}$)", fontsize=10.5)
@@ -360,7 +360,7 @@ def plot_candidate_figure(cand_name, cand_label, cand_values, s_intra, s_inter, 
     # (b) S_inter vs Candidate
     ax_b = fig.add_subplot(gs[0, 1])
     r_b, p_b = pearsonr(s_out, cand)
-    ax_b.scatter(s_out, cand, s=20, alpha=0.8, c=shade(m, RAMPS["mu"]), edgecolors="k", linewidth=0.3)
+    ax_b.scatter(s_out, cand, s=20, color="#4c72b0", edgecolors="k", linewidth=0.3)
     ax_b.set_xlabel(r"$S_{\mathrm{inter}}$ [$\mu\mathrm{m}$]", fontsize=10)
     ax_b.set_ylabel(cand_label, fontsize=10)
     ax_b.set_title(f"(b) $S_{{\\mathrm{{inter}}}}$ vs {cand_name}\n$r = {r_b:+.3f}$ ($p = {p_b:.1e}$)", fontsize=10.5)
@@ -368,7 +368,7 @@ def plot_candidate_figure(cand_name, cand_label, cand_values, s_intra, s_inter, 
 
     # (c) Sparsity plane coloured by Candidate
     ax_c = fig.add_subplot(gs[0, 2])
-    sc_c = ax_c.scatter(s_in, s_out, s=24, alpha=0.85, c=cand, cmap="viridis", edgecolors="k", linewidth=0.3)
+    sc_c = ax_c.scatter(s_in, s_out, s=24, c=cand, cmap="viridis", edgecolors="k", linewidth=0.3)
     ax_c.set_xlabel(r"$S_{\mathrm{intra}}$ [$\mu\mathrm{m}$]", fontsize=10)
     ax_c.set_ylabel(r"$S_{\mathrm{inter}}$ [$\mu\mathrm{m}$]", fontsize=10)
     ax_c.set_title(f"(c) Sparsity Plane coloured by {cand_name}", fontsize=10.5)
@@ -392,7 +392,7 @@ def plot_candidate_figure(cand_name, cand_label, cand_values, s_intra, s_inter, 
     # (e) Candidate vs Accuracy (Linear & Quadratic fit)
     ax_e = fig.add_subplot(gs[1, 1])
     r_e, p_e = pearsonr(cand, acc)
-    ax_e.scatter(cand, acc, s=20, alpha=0.8, color="#8172b2", edgecolors="k", linewidth=0.3)
+    ax_e.scatter(cand, acc, s=20, color="#8172b2", edgecolors="k", linewidth=0.3)
     
     # Fit linear & quadratic
     cand_grid = np.linspace(np.min(cand), np.max(cand), 200)
@@ -414,7 +414,7 @@ def plot_candidate_figure(cand_name, cand_label, cand_values, s_intra, s_inter, 
     res_x = acc_decomp_quad["res_sp_cand"]
     res_y = acc_decomp_quad["res_sp_acc"]
     r_part, p_part = pearsonr(res_x, res_y)
-    ax_f.scatter(res_x, res_y, s=20, alpha=0.8, color="#55a868", edgecolors="k", linewidth=0.3)
+    ax_f.scatter(res_x, res_y, s=20, color="#55a868", edgecolors="k", linewidth=0.3)
     # fit line on residuals
     _, coef_res, _, _ = fit_ols_r2([res_x], res_y)
     rx_grid = np.linspace(np.min(res_x), np.max(res_x), 100)
@@ -534,6 +534,8 @@ def main(cfg: DictConfig):
     
     bap_rate_x_er = bap_rate * bap_er
     dspike_rate_x_er = dspike_rate * dspike_er
+    gamma_bap = np.array([r["gamma_within_bap"] for r in runs])
+    gamma_dsp = np.array([r["gamma_within_dsp"] for r in runs])
 
     candidates = [
         ("SR", "SR (calcium)", sr_raw),
@@ -545,6 +547,8 @@ def main(cfg: DictConfig):
         ("bAP ER", "Mean bAP ER (All PCs)", bap_er),
         ("bAP Rate x ER", "bAP Rate x Mean bAP ER [Hz]", bap_rate_x_er),
         ("dSpike Rate x ER", "dSpike Rate x Mean dSpike ER [Hz]", dspike_rate_x_er),
+        ("bAP Consistency", "Within-class coincidence, bAP-related compartment spikes", gamma_bap),
+        ("dSpike Consistency", "Within-class coincidence, other compartment spikes", gamma_dsp),
     ]
 
     # 1. Baseline Figure
@@ -563,10 +567,15 @@ def main(cfg: DictConfig):
         "bAP ER": "bap_er",
         "bAP Rate x ER": "bap_rate_x_er",
         "dSpike Rate x ER": "dspike_rate_x_er",
+        "bAP Consistency": "bap_consistency",
+        "dSpike Consistency": "dspike_consistency",
     }
 
     for name, label, values in candidates:
         fig_path = os.path.join(out_dir, f"candidate_{slugs[name]}.png")
+        if np.all(np.isnan(values)):
+            logger.info(f"{name}: no run has a value in the given inputs; skipped")
+            continue
         n_missing = int(np.isnan(values).sum())
         if n_missing:
             logger.info(f"{name}: {n_missing} run(s) without a value are left out")

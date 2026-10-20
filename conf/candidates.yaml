@@ -18,10 +18,13 @@ accuracy_path:
   - "data/2026-09-30_sweep200/caracal/results.json"
   - "data/2026-09-30_sweep200/oncilla/results.json"
 
+# dynamics.py mode=compute target=separation の summary.npz（リスト可）。SR に使う
 separation_path:
   - "data/2026-10-06-separation/caracal.npz"
   - "data/2026-10-06-separation/oncilla.npz"
 
+# dynamics.py mode=compute の JSON（リスト可）。rates.json、effective_rank.json、consistency.json を
+# 何本でも並べてよい。run_dir で結合し、各ファイルにある項目だけを取り込む
 dynamics_path:
   - "data/2026-10-11-rates/caracal.json"
   - "data/2026-10-11-rates/oncilla.json"
