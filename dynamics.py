@@ -453,11 +453,9 @@ def run_plot(cfg: DictConfig):
             for r in acc_obj.get("runs", []):
                 sizes = r.get("sizes", [])
                 if sizes:
-                    # Map both full source_run path and its basename (job_id)
                     s_run = r.get("source_run", "")
                     acc_val = sizes[0]["test_accuracy_mean"]
                     acc_map[s_run] = acc_val
-                    acc_map[os.path.basename(s_run)] = acc_val
 
     # Load Sparsity from sparsity.json
     sp_map = {}
@@ -466,18 +464,16 @@ def run_plot(cfg: DictConfig):
         for sp in sp_records:
             r_dir = sp.get("run_dir", "")
             sp_map[r_dir] = sp
-            sp_map[os.path.basename(r_dir)] = sp
 
     # Attach accuracy and sparsity to dynamics records
     merged_rows = []
     for d in dynamics_records:
         r_dir = d.get("run_dir", "")
-        b_name = os.path.basename(r_dir)
-        acc = acc_map.get(r_dir, acc_map.get(b_name, None))
+        acc = acc_map.get(r_dir, None)
         if acc is not None:
             d["accuracy"] = acc
 
-        sp = sp_map.get(r_dir, sp_map.get(b_name, None))
+        sp = sp_map.get(r_dir, None)
         if sp is not None:
             d["sparsity_intra_tree"] = sp.get("intra", sp.get("sparsity_intra_tree", np.nan))
             d["sparsity_inter_tree"] = sp.get("inter", sp.get("sparsity_inter_tree", np.nan))
