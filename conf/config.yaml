@@ -1,8 +1,10 @@
 # Default configurations for the reservoir simulation
 defaults:
   - task: random
-  - override hydra/launcher: joblib
   - _self_
+  # _self_ の後に置く。設定グループの値が config.yaml の既定値に勝つ必要があるため。
+  - optional sample: null
+  - override hydra/launcher: joblib
 hydra:
   job:
     chdir: True  # これをTrueにすると、プログラム実行中に自動でoutputs/...に移動します
@@ -17,11 +19,40 @@ time_integration: True
 seed: 1234                    # Random seed for reproducibility
 exc_syn_tau1: 1               # Added: Required for synapse initialization
 exc_syn_tau2: 5               # Added: Required for synapse initialization
+# uniform: 膜面積に比例した重みでソーマ＋全樹状突起に配置（syn_loc_mean / syn_loc_std は未使用）
+# gaussian / gaussian-apical / gaussian-basal: 面積 × ソーマからの距離のガウス重み
 syn_loc_condition: "gaussian" # uniform or gaussian or gaussian-apical or gaussian-basal
 syn_loc_mean: 600
 syn_loc_std:  100
 
+# (μ,σ) をランダムに振るときは conf/sample/ の設定グループを使う。
+#   uv run make_samples.py --count 70
+#   uv run main.py -m 'sample=glob(*)' ...
+# 1ファイルが1点で、(syn_loc_mean, syn_loc_std, seed, sample_id) を持つ。Hydra が
+# 合成するので .hydra/config.yaml に実際の値が載る。ジョブの中で導出すると、
+# スナップショットが既定値のまま残って実行内容と食い違う。
+sample_id: null
+
 cell_name: "cell1/"
+
+# 書き出すものを1箇所で決める。どのフラグもシミュレーションの内容には影響しない
+# （乱数列を動かさない）ので、出力だけを変えて同じダイナミクスを再現できる。
+output:
+  confusion_matrix: true      # figure/confmat_*.png と data/classification_results.npz
+  firing_rate: true           # data/firing_rate.txt
+  flow_analysis_figure: true  # reservoir_flow_analysis.png（sinwave タスクのみ）
+
+  # data/run_info.npz。トレース以外の全て——シナプスと記録地点の位置、ラベル、
+  # 試行長、実行の来歴。1 MB未満なので、スイープを走査するときはこれだけ読めばよい。
+  run_info: true
+
+  # data/buffer*.npz と figure/buffer*.png。試行ごとに1ファイル、各ファイルが
+  # variables[0]（readout に使う物理量）と variables[1]（もう一方）を持つ。
+  # 既存の解析はこの形式を前提にしている（sorted(glob("buffer*.npz"))）。
+  # 試行ごとに書き出して解放するので、1ジョブが抱えるメモリが試行1本分で済む。
+  buffers: true
+  buffer_figures: false       # buffers が true のときだけ効く
+  buffer_io_included: true    # バッファに target / output / 時間軸を含めるか
 
 gcalbar_ratio: null
 gcanbar_ratio: null

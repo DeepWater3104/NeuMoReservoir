@@ -33,3 +33,4 @@ figure/
 
 # restricted access dataset
 dataset/
+conf/sample/*.yaml

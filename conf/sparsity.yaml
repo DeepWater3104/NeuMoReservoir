@@ -1,0 +1,20 @@
+# Configuration for sparsity.py
+# シナプス配置だけから intra / inter-branch sparsity を算出する。
+defaults:
+  - _self_
+hydra:
+  job:
+    chdir: True
+
+# 対象のランのディレクトリ。グロブ可。相対パスは元の作業ディレクトリから解決する。
+run_dir: null
+
+data_dir: "data"
+
+# compute: run_dir から算出して sparsity.json を書く
+# plot:    保存済みの sparsity.json を読んで図を描く
+# by_size: readout_subset の複数の点数 k の results.json と sparsity.json を結合し、k ごとの関係を描く
+mode: "compute"
+sparsity_path: null
+figure_dir: "figure"
+accuracy_path: null   # readout_subset.py の results.json。指定すると周辺化した Accuracy を使う
