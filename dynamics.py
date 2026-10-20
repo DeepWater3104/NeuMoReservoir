@@ -8,7 +8,10 @@ Quantifies the dynamic state of single-neuron reservoir from raw waveforms:
 
 Usage:
     # Compute on cluster / local machines:
-    uv run python dynamics.py mode=compute 'run_dir=multirun/2026-09-30/local-sweep-caracal/*' data_dir=data/2026-09-30-caracal n_jobs=12
+    uv run python dynamics.py mode=compute 'run_dir=multirun/2026-09-30/local-sweep-caracal/*' n_jobs=12
+
+    Every mode writes its outputs (dynamics.json, events.npz, figures) into the
+    Hydra run directory created for that invocation, so no run overwrites another.
 
     # Plot across multiple runs:
     uv run python dynamics.py mode=plot \\
@@ -359,11 +362,6 @@ def run_compute(cfg: DictConfig):
 
     logger.info(f"Computing dynamics metrics for {len(job_dirs)} runs...")
 
-    data_dir = cfg.data_dir
-    if not os.path.isabs(data_dir):
-        data_dir = os.path.join(orig_cwd, data_dir)
-    os.makedirs(data_dir, exist_ok=True)
-
     n_jobs = cfg.get("n_jobs", 12)
     window_ms = cfg.get("window_ms", 5.0)
     v_threshold = cfg.get("v_threshold", -30.0)
@@ -384,9 +382,10 @@ def run_compute(cfg: DictConfig):
 
     valid = [r for r in results if r is not None]
     valid_results = [meta for meta, _ in valid]
-    _save_events(valid, os.path.join(HydraConfig.get().runtime.output_dir, "events.npz"))
+    out_dir = HydraConfig.get().runtime.output_dir
+    _save_events(valid, os.path.join(out_dir, "events.npz"))
 
-    out_file = os.path.join(data_dir, "dynamics.json")
+    out_file = os.path.join(out_dir, "dynamics.json")
     with open(out_file, "w") as f:
         json.dump(valid_results, f, indent=2)
 
@@ -569,19 +568,7 @@ def run_plot(cfg: DictConfig):
 
     plt.tight_layout()
 
-    # Determine output path
-    fig_dir = cfg.get("figure_dir", "figure")
-    if not os.path.isabs(fig_dir):
-        fig_dir = os.path.join(orig_cwd, fig_dir)
-    os.makedirs(fig_dir, exist_ok=True)
-
-    out_path = cfg.get("output_path", None)
-    if not out_path:
-        out_path = os.path.join(fig_dir, "dynamics_overview.png")
-    elif not os.path.isabs(out_path):
-        out_path = os.path.join(orig_cwd, out_path)
-
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    out_path = os.path.join(HydraConfig.get().runtime.output_dir, "dynamics_overview.png")
     plt.savefig(out_path, dpi=300)
     plt.close()
     logger.info(f"Saved dynamics overview plot to: {out_path}")

@@ -9,7 +9,7 @@ hydra:
 # 対象のランのディレクトリ。グロブ可。相対パスは元の作業ディレクトリから解決する。
 run_dir: null
 
-data_dir: "data"
+# 出力（dynamics.json、events.npz、図）は、実行ごとに Hydra が作るランディレクトリ outputs/<日付>/<時刻>/ に書く
 
 # compute: run_dir から算出して dynamics.json を書く
 # plot:    保存済みの dynamics.json, results.json, sparsity.json を読んで図を描く
@@ -19,8 +19,6 @@ mode: "compute"
 dynamics_path: null
 accuracy_path: null
 sparsity_path: null
-figure_dir: "figure"
-output_path: null
 
 # 計算パラメータ
 window_ms: 5.0
