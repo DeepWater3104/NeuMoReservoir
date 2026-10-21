@@ -216,6 +216,38 @@ def decompose_accuracy_r2(s_intra, s_inter, cand, accuracy, quadratic=False):
     }
 
 
+def adjusted_r2(r2, n, p):
+    """Adjusted R² (Ezekiel): 1 - (1 - R²)(n - 1)/(n - p - 1), p excluding the intercept."""
+    return float(1.0 - (1.0 - r2) * (n - 1) / (n - p - 1))
+
+
+def _four_parts(r2_sp, r2_set, r2_both):
+    return {
+        "r2_sparsity": r2_sp, "r2_candidate": r2_set, "r2_both": r2_both,
+        "unique_sparsity": r2_both - r2_set,
+        "unique_candidate": r2_both - r2_sp,
+        "common": r2_sp + r2_set - r2_both,
+        "unexplained": 1.0 - r2_both,
+    }
+
+
+def decompose_accuracy_set(sp_cols, set_cols, accuracy):
+    """Four-way partition of accuracy between sparsity and a set of candidates.
+
+    Returned twice: from raw R², and from adjusted R² of the same three models, the
+    estimate variation partitioning uses (Peres-Neto et al. 2006).
+    """
+    n = len(accuracy)
+    fits = {}
+    for name, cols in (("sp", sp_cols), ("set", set_cols), ("both", sp_cols + set_cols)):
+        r2, _, _, _ = fit_ols_r2(cols, accuracy)
+        fits[name] = (r2, adjusted_r2(r2, n, len(cols)))
+    return {
+        "raw": _four_parts(fits["sp"][0], fits["set"][0], fits["both"][0]),
+        "adjusted": _four_parts(fits["sp"][1], fits["set"][1], fits["both"][1]),
+    }
+
+
 # ==============================================================================
 # 3. Plot Helpers
 # ==============================================================================
@@ -507,6 +539,65 @@ def plot_comparison_summary(all_results, out_path):
     logger.info(f"Saved summary comparison figure to: {out_path}")
 
 
+def plot_combinations(combo_results, out_path):
+    """Accuracy partition for each set of candidates: adjusted (top) and raw (bottom),
+    linear (left) and quadratic (right). The dashed line on each bar is the
+    sparsity-only value on the same runs."""
+    names = list(combo_results.keys())
+    x_pos = np.arange(len(names))
+    width = 0.55
+    fig, axes = plt.subplots(2, 2, figsize=(20, 12), sharex=True)
+    for row, kind in enumerate(("adjusted", "raw")):
+        for col, model in enumerate(("linear", "quadratic")):
+            ax = axes[row, col]
+            parts = [combo_results[c][model][kind] for c in names]
+            low, high = stacked_bars(ax, x_pos, parts, ACCURACY_PARTS, width, horizontal=False)
+            for x, d in zip(x_pos, parts):
+                ax.hlines(d["r2_sparsity"], x - width / 2 - 0.08, x + width / 2 + 0.08, colors="k", linestyles="--", lw=1.4)
+            ax.plot([], [], "k--", lw=1.4, label="Sparsity-only (same runs)")
+            ax.set_ylim(min(0.0, low) - 0.02, max(1.0, high) + 0.05)
+            label = "adjusted $R^2$" if kind == "adjusted" else "$R^2$"
+            ax.set_ylabel(f"Accuracy {label} fraction", fontsize=11)
+            ax.set_title(f"({'ab'[row]}{col + 1}) {model}, {label}", fontsize=12, fontweight="bold")
+            ax.grid(True, linestyle=":", alpha=0.6, axis="y")
+            ax.set_xticks(x_pos)
+            ax.set_xticklabels([f"{c}\n(N={combo_results[c]['n_runs']})" for c in names], fontsize=9, rotation=35, ha="right")
+    axes[0, 1].legend(loc="upper right", ncol=3, fontsize=9, framealpha=0.9)
+    fig.suptitle("Accuracy partition between sparsity and sets of dynamics candidates", fontsize=13, fontweight="bold", y=0.995)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+    logger.info(f"Saved combinations figure to: {out_path}")
+
+
+def run_combinations(combinations, candidate_values, s_intra, s_inter, accuracy):
+    results = {}
+    for entry in combinations:
+        # An entry is a list of candidate names, or {name, members} to label a long set.
+        if hasattr(entry, "get") and entry.get("members") is not None:
+            members, name = list(entry["members"]), str(entry["name"])
+        else:
+            members = list(entry)
+            name = " + ".join(members)
+        values = [candidate_values[m] for m in members]
+        mask = ~np.isnan(accuracy)
+        for v in values:
+            mask &= ~np.isnan(v)
+        if mask.sum() < len(accuracy):
+            logger.info(f"{name}: {int(len(accuracy) - mask.sum())} run(s) without a value are left out")
+        a, b, acc = s_intra[mask], s_inter[mask], accuracy[mask]
+        vals = [v[mask] for v in values]
+        res = {"members": members, "n_runs": int(mask.sum())}
+        for model, quadratic in (("linear", False), ("quadratic", True)):
+            set_cols = []
+            for v in vals:
+                set_cols += build_candidate_design(v, quadratic=quadratic)
+            res[model] = decompose_accuracy_set(build_sparsity_design(a, b, quadratic=quadratic), set_cols, acc)
+            res[model]["n_terms_candidates"] = len(set_cols)
+        results[name] = res
+    return results
+
+
 # ==============================================================================
 # 7. Main Execution
 # ==============================================================================
@@ -584,10 +675,17 @@ def main(cfg: DictConfig):
     # 3. Summary Comparison Figure
     plot_comparison_summary(results, os.path.join(out_dir, "candidates_comparison.png"))
 
+    # 4. Sets of candidates
+    combinations = cfg.get("combinations") or []
+    values_by_name = {name: values for name, _, values in candidates}
+    combo_results = run_combinations(combinations, values_by_name, s_intra, s_inter, accuracy)
+    if combo_results:
+        plot_combinations(combo_results, os.path.join(out_dir, "candidates_combinations.png"))
+
     # 4. Save JSON results
     out_json_file = os.path.join(out_dir, "results.json")
     with open(out_json_file, "w") as f:
-        json.dump({"baseline": baseline_stats, "candidates": results}, f, indent=2)
+        json.dump({"baseline": baseline_stats, "candidates": results, "combinations": combo_results}, f, indent=2)
     logger.info(f"Saved results to: {out_json_file}")
 
 

@@ -31,3 +31,14 @@ dynamics_path:
 
 # Accuracy に使う readout の点数 k（readout_subset の results.json の中から選ぶ）
 subset_size: 100
+
+# 候補量の組。組ごとに、sparsity と組で Accuracy の R² を4つに分ける（候補量の名前は candidates.py の一覧と同じ）
+combinations:
+  - ["SR (Standardised)", "bAP Rate"]
+  - ["SR (Standardised)", "dSpike Rate"]
+  - ["SR (Standardised)", "bAP Rate", "dSpike Rate"]
+  - ["bAP Consistency", "bAP Rate"]
+  - ["bAP Consistency", "dSpike Rate"]
+  - ["SR (Standardised)", "bAP Consistency"]
+  - name: "All 10 (no soma rate)"
+    members: ["SR", "SR (Standardised)", "bAP Rate", "dSpike Rate", "dSpike ER", "bAP ER", "bAP Rate x ER", "dSpike Rate x ER", "bAP Consistency", "dSpike Consistency"]
