@@ -168,7 +168,7 @@ def accuracy_for_columns(data, columns, reg, train_slices, test_slices):
 
     train_accuracy = float(np.mean(train_predicted == data["train_label"]))
     test_accuracy = float(np.mean(test_predicted == data["test_label"]))
-    return train_accuracy, test_accuracy
+    return train_accuracy, test_accuracy, test_predicted
 
 
 def sweep_subset_sizes(data, subset_sizes, num_draws, seed, reg):
@@ -205,19 +205,22 @@ def sweep_subset_sizes(data, subset_sizes, num_draws, seed, reg):
         logger.warning(f"Ignoring subset sizes outside 1..{num_sites}: {dropped}")
 
     rng = np.random.default_rng(seed)
-    rows = {"size": [], "draw": [], "train_accuracy": [], "test_accuracy": []}
+    # The predicted label of every test trial is kept per draw, so that accuracy
+    # can be rescored on any subset of the test trials without refitting.
+    rows = {"size": [], "draw": [], "train_accuracy": [], "test_accuracy": [], "test_predicted": []}
 
     for size in usable_sizes:
         draws = 1 if size == num_sites else num_draws
         for draw in range(draws):
             columns = (np.arange(num_sites) if size == num_sites
                        else rng.choice(num_sites, size=size, replace=False))
-            train_accuracy, test_accuracy = accuracy_for_columns(
+            train_accuracy, test_accuracy, test_predicted = accuracy_for_columns(
                 data, columns, reg, train_slices, test_slices)
             rows["size"].append(size)
             rows["draw"].append(draw)
             rows["train_accuracy"].append(train_accuracy)
             rows["test_accuracy"].append(test_accuracy)
+            rows["test_predicted"].append(test_predicted.astype(np.int16))
         scores = np.array(rows["test_accuracy"][-draws:])
         logger.info(f"sites={size:4d}  draws={draws:4d}  "
                     f"test accuracy mean={scores.mean():.4f} sd={scores.std():.4f} "
@@ -225,6 +228,7 @@ def sweep_subset_sizes(data, subset_sizes, num_draws, seed, reg):
 
     curves = {key: np.array(value) for key, value in rows.items()}
     curves["num_sites"] = np.array(num_sites)
+    curves["test_label"] = np.asarray(data["test_label"], dtype=np.int16)
     return curves
 
 
@@ -355,6 +359,11 @@ def run_compute(cfg, original_cwd):
 
     combined = {key: np.concatenate([c[key] for c in per_run])
                 for key in ("size", "draw", "run", "train_accuracy", "test_accuracy")}
+    # Rows of test_predicted line up with the rows above; test_labels has one row
+    # per run, in the order of source_runs, trials in simulation order.
+    combined["test_predicted"] = np.concatenate([c["test_predicted"] for c in per_run])
+    combined["test_labels"] = np.stack([c["test_label"] for c in per_run])
+    combined["test_label_runs"] = np.array([s["source_run"] for s in summaries])
     combined["num_sites"] = per_run[0]["num_sites"]
 
     os.makedirs(cfg.data_dir, exist_ok=True)
