@@ -82,6 +82,7 @@ def load_merged_data(cfg, orig_cwd):
                 runs.setdefault(item["run_dir"], {})["sparsity"] = {
                     "intra": float(item["intra"]),
                     "inter": float(item["inter"]),
+                    "mean_distance": float(item["mean_distance"]) if "mean_distance" in item else np.nan,
                     "syn_loc_mean": float(item["syn_loc_mean"]),
                     "syn_loc_std": float(item["syn_loc_std"]),
                 }
@@ -731,6 +732,66 @@ def run_split_half(cfg, orig_cwd, out_dir):
     logger.info(json.dumps(stats["candidates"], indent=2))
 
 
+def full_quadratic(columns):
+    """Each column, its square, and every pairwise product."""
+    out = list(columns) + [c ** 2 for c in columns]
+    for i in range(len(columns)):
+        for j in range(i + 1, len(columns)):
+            out.append(columns[i] * columns[j])
+    return out
+
+
+def compare_upstream(runs, accuracy, out_dir):
+    """Accuracy explained by sparsity with and without where the synapses sit."""
+    s_intra = np.array([r["sparsity"]["intra"] for r in runs])
+    s_inter = np.array([r["sparsity"]["inter"] for r in runs])
+    dist = np.array([r["sparsity"]["mean_distance"] for r in runs])
+    mu = np.array([r["sparsity"]["syn_loc_mean"] for r in runs])
+    sigma = np.array([r["sparsity"]["syn_loc_std"] for r in runs])
+    n = len(accuracy)
+    sets = {
+        "S_intra, S_inter": [s_intra, s_inter],
+        "S_intra, S_inter, mean distance": [s_intra, s_inter, dist],
+        "mean distance": [dist],
+        "mu, sigma": [mu, sigma],
+    }
+    stats = {"n_runs": n, "models": {}, "correlations": {}}
+    for name, cols in sets.items():
+        rec = {}
+        for model, design in (("linear", list(cols)), ("quadratic", full_quadratic(cols))):
+            r2 = fit_ols_r2(design, accuracy)[0]
+            rec[model] = {"r2": r2, "adj_r2": adjusted_r2(r2, n, len(design)), "n_terms": len(design)}
+        stats["models"][name] = rec
+    for name, v in (("mu", mu), ("S_intra", s_intra), ("S_inter", s_inter), ("accuracy", accuracy)):
+        stats["correlations"][f"mean distance vs {name}"] = float(pearsonr(dist, v)[0])
+    stats["mean_distance_range"] = [float(dist.min()), float(np.median(dist)), float(dist.max())]
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.8))
+    for ax, (x, xl) in zip(axes[:2], ((mu, r"$\mu$ [$\mu$m]"), (dist, r"mean distance $\bar{d}$ [$\mu$m]"))):
+        y, yl = (dist, r"mean distance $\bar{d}$ [$\mu$m]") if x is mu else (accuracy, "Accuracy")
+        ax.scatter(x, y, s=18, color="#4c72b0", edgecolors="k", linewidth=0.3)
+        ax.set_xlabel(xl); ax.set_ylabel(yl)
+        ax.set_title(f"r = {pearsonr(x, y)[0]:+.3f}", fontsize=10)
+        ax.grid(True, linestyle=":", alpha=0.6)
+    ax = axes[2]
+    names = list(sets)
+    xs = np.arange(len(names))
+    for k, model in enumerate(("linear", "quadratic")):
+        ax.bar(xs + (k - 0.5) * 0.38, [stats["models"][m][model]["adj_r2"] for m in names], 0.38,
+               color=("#8da0cb", "#4c72b0")[k], edgecolor="k", linewidth=0.5, label=model)
+    ax.set_xticks(xs); ax.set_xticklabels(names, rotation=20, ha="right", fontsize=9)
+    ax.set_ylabel("Accuracy adjusted $R^2$")
+    ax.set_title(f"Accuracy explained by upstream sets (N={n})", fontsize=10)
+    ax.legend(fontsize=9)
+    ax.grid(True, linestyle=":", alpha=0.6, axis="y")
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "upstream.png"), dpi=200)
+    plt.close(fig)
+    with open(os.path.join(out_dir, "upstream.json"), "w") as f:
+        json.dump(stats, f, indent=2)
+    logger.info(json.dumps(stats, indent=2))
+
+
 # ==============================================================================
 # 7. Main Execution
 # ==============================================================================
@@ -814,6 +875,10 @@ def main(cfg: DictConfig):
     combo_results = run_combinations(combinations, values_by_name, s_intra, s_inter, accuracy)
     if combo_results:
         plot_combinations(combo_results, os.path.join(out_dir, "candidates_combinations.png"))
+
+    # 6. Sparsity with and without where the synapses sit (needs mean_distance in sparsity.json)
+    if not np.any(np.isnan([r["sparsity"]["mean_distance"] for r in runs])):
+        compare_upstream(runs, accuracy, out_dir)
 
     # 5. Candidates and accuracy from separate halves of the test trials
     if cfg.get("split_half") and cfg.split_half.get("readout_curves_path"):
