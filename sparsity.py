@@ -149,6 +149,8 @@ def sparsity_for_run(tree, syn_names, syn_distance):
         "inter": float(backtrack.mean()),
         "cable": float((depth_difference + backtrack).mean()),
         "fraction_branching": float((backtrack > 0).mean()),
+        # Where the synapses sit, which the pairwise measures above do not carry
+        "mean_distance": float(np.mean(syn_distance)),
     }
 
 
