@@ -574,7 +574,7 @@ def run_combinations(combinations, candidate_values, s_intra, s_inter, accuracy)
     results = {}
     for entry in combinations:
         # An entry is a list of candidate names, or {name, members} to label a long set.
-        if hasattr(entry, "get") and entry.get("members") is not None:
+        if isinstance(entry, (dict, DictConfig)):
             members, name = list(entry["members"]), str(entry["name"])
         else:
             members = list(entry)
