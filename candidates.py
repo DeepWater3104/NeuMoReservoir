@@ -170,12 +170,23 @@ def decompose_sparsity_on_candidate(s_intra, s_inter, cand, quadratic=False):
     common = float(r2_intra_m + r2_inter_m - r2_full)
     unexplained = float(1.0 - r2_full)
 
+    # The same parts from adjusted R² of the three models, keys prefixed adj_.
+    n = len(cand)
+    a_full = adjusted_r2(r2_full, n, len(cols_full))
+    a_intra = adjusted_r2(r2_intra_m, n, len(cols_intra))
+    a_inter = adjusted_r2(r2_inter_m, n, len(cols_inter))
+
     return {
         "r2_full": r2_full,
         "unique_intra": unique_intra,
         "unique_inter": unique_inter,
         "common": common,
         "unexplained": unexplained,
+        "adj_r2_full": a_full,
+        "adj_unique_intra": a_full - a_inter,
+        "adj_unique_inter": a_full - a_intra,
+        "adj_common": a_intra + a_inter - a_full,
+        "adj_unexplained": 1.0 - a_full,
     }
 
 
@@ -203,6 +214,11 @@ def decompose_accuracy_r2(s_intra, s_inter, cand, accuracy, quadratic=False):
     common = float(r2_sp + r2_cand - r2_both)
     unexplained = float(1.0 - r2_both)
 
+    # The same parts from adjusted R² of the three models, keys prefixed adj_.
+    n = len(accuracy)
+    adj = _four_parts(adjusted_r2(r2_sp, n, len(cols_sp)), adjusted_r2(r2_cand, n, len(cols_cand)),
+                      adjusted_r2(r2_both, n, len(cols_both)))
+
     return {
         "r2_sparsity": r2_sp,
         "r2_candidate": r2_cand,
@@ -211,6 +227,7 @@ def decompose_accuracy_r2(s_intra, s_inter, cand, accuracy, quadratic=False):
         "unique_candidate": unique_cand,
         "common": common,
         "unexplained": unexplained,
+        **{f"adj_{k}": float(v) for k, v in adj.items()},
         "res_sp_cand": res_sp_cand,
         "res_sp_acc": res_sp_acc,
     }
@@ -497,6 +514,11 @@ def plot_candidate_figure(cand_name, cand_label, cand_values, s_intra, s_inter, 
 # 6. Summary Comparison Figure
 # ==============================================================================
 
+def _adjusted_parts(decomp):
+    """The adj_-prefixed parts of a decomposition under the plain key names."""
+    return {k[len("adj_"):]: v for k, v in decomp.items() if k.startswith("adj_")}
+
+
 def plot_comparison_summary(all_results, out_path):
     """Both decompositions for every candidate, linear and quadratic side by side.
 
@@ -510,21 +532,21 @@ def plot_comparison_summary(all_results, out_path):
     fig, axes = plt.subplots(2, 2, figsize=(22, 12), sharex=True)
     for col, model in enumerate(("linear", "quadratic")):
         ax_a, ax_b = axes[0, col], axes[1, col]
-        low, high = stacked_bars(ax_a, x_pos, [all_results[c][f"sparsity_on_candidate_{model}"] for c in cand_names],
+        low, high = stacked_bars(ax_a, x_pos, [_adjusted_parts(all_results[c][f"sparsity_on_candidate_{model}"]) for c in cand_names],
                                  SPARSITY_PARTS, width, horizontal=False)
         ax_a.set_ylim(min(0.0, low) - 0.02, max(1.0, high) + 0.05)
         ax_a.set_ylabel(r"Candidate $R^2$ fraction", fontsize=11)
-        ax_a.set_title(f"(a) Sparsity explaining each candidate ({model})", fontsize=12, fontweight="bold")
+        ax_a.set_title(f"(a) Sparsity explaining each candidate ({model}, adjusted $R^2$)", fontsize=12, fontweight="bold")
         ax_a.grid(True, linestyle=":", alpha=0.6, axis="y")
 
-        acc_decomps = [all_results[c][f"accuracy_decomp_{model}"] for c in cand_names]
+        acc_decomps = [_adjusted_parts(all_results[c][f"accuracy_decomp_{model}"]) for c in cand_names]
         low, high = stacked_bars(ax_b, x_pos, acc_decomps, ACCURACY_PARTS, width, horizontal=False)
         for x, d in zip(x_pos, acc_decomps):
             ax_b.hlines(d["r2_sparsity"], x - width / 2 - 0.08, x + width / 2 + 0.08, colors="k", linestyles="--", lw=1.4)
         ax_b.plot([], [], "k--", lw=1.4, label="Sparsity-only $R^2$ (same runs)")
         ax_b.set_ylim(min(0.0, low) - 0.02, max(1.0, high) + 0.05)
         ax_b.set_ylabel(r"Accuracy $R^2$ fraction", fontsize=11)
-        ax_b.set_title(f"(b) Accuracy $R^2$ decomposition ({model})", fontsize=12, fontweight="bold")
+        ax_b.set_title(f"(b) Accuracy decomposition ({model}, adjusted $R^2$)", fontsize=12, fontweight="bold")
         ax_b.set_xticks(x_pos)
         ax_b.set_xticklabels([f"{c}\n(N={all_results[c]['n_runs']})" for c in cand_names], fontsize=9, rotation=35, ha="right")
         ax_b.grid(True, linestyle=":", alpha=0.6, axis="y")
