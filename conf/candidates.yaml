@@ -42,3 +42,10 @@ combinations:
   - ["SR (Standardised)", "bAP Consistency"]
   - name: "All 10 (no soma rate)"
     members: ["SR", "SR (Standardised)", "bAP Rate", "dSpike Rate", "dSpike ER", "bAP ER", "bAP Rate x ER", "dSpike Rate x ER", "bAP Consistency", "dSpike Consistency"]
+
+# 試行を2つの組に分けて、候補量と Accuracy を別々の組から計算する確かめ（任意）。
+# readout_curves_path: readout_subset.py の curves.npz（test_predicted を含むもの、リスト可）
+# consistency_pairs_path: dynamics.py target=consistency の consistency_pairs.npz（リスト可）
+split_half:
+  readout_curves_path: null
+  consistency_pairs_path: null

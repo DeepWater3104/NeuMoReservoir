@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, ListConfig
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, spearmanr
 
 logger = logging.getLogger(__name__)
 
@@ -620,6 +620,117 @@ def run_combinations(combinations, candidate_values, s_intra, s_inter, accuracy)
     return results
 
 
+def split_groups(labels):
+    """Split test trials, class by class, into groups A and B of equal size.
+
+    Each class's trials are taken in simulation order; ranks 0, 2, 4 go to A and
+    1, 3 to B for the first half of the classes, the other way round for the rest.
+    """
+    classes = np.unique(labels)
+    in_a = np.zeros(len(labels), dtype=bool)
+    for k, c in enumerate(classes):
+        idx = np.where(labels == c)[0]
+        ranks = np.arange(len(idx))
+        take = (ranks % 2 == 0) if k < len(classes) // 2 else (ranks % 2 == 1)
+        in_a[idx[take]] = True
+    return in_a
+
+
+def _ratio_sr(pair_mean, same, select):
+    """SR from time-averaged pair distances, using only the pairs in select."""
+    within, between = pair_mean[select & same], pair_mean[select & ~same]
+    return float(between.mean() / within.mean()) if len(within) and len(between) else np.nan
+
+
+def run_split_half(cfg, orig_cwd, out_dir):
+    """Candidates from one half of the test trials against accuracy from the other.
+
+    Accuracy is rescored from the per-trial predictions readout_subset saved; SR
+    from the separation summary's pair distances; consistency from the per-pair
+    coincidence matrices. 'same' pairs a candidate and accuracy from one group,
+    'cross' from opposite groups; each is averaged over the two assignments.
+    """
+    sh = cfg.split_half
+    curves = {}
+    for p in _as_list(sh.readout_curves_path):
+        with np.load(_resolve(p, orig_cwd)) as npz:
+            labels, runs = npz["test_labels"], npz["test_label_runs"]
+            for r, rd in enumerate(runs):
+                sel = (npz["run"] == r) & (npz["size"] == cfg.subset_size)
+                curves[str(rd)] = (npz["test_predicted"][sel], labels[r])
+    separation = {}
+    for p in _as_list(cfg.separation_path):
+        with np.load(_resolve(p, orig_cwd)) as npz:
+            for i, rd in enumerate(npz["run_dir"]):
+                separation[str(rd)] = {k: npz[k][i] for k in ("labels", "same_class", "state_raw_pair_mean", "state_z_pair_mean")}
+    gammas = {}
+    for p in _as_list(sh.consistency_pairs_path):
+        with np.load(_resolve(p, orig_cwd)) as npz:
+            for i, rd in enumerate(npz["run_dir"]):
+                gammas[str(rd)] = {name: npz[f"{i}_{name}"] for name in ("bap", "dsp")}
+
+    names = ("SR", "SR (Standardised)", "bAP Consistency", "dSpike Consistency")
+    rows = []
+    for rd, (pred, labels) in curves.items():
+        if rd not in separation or rd not in gammas:
+            continue
+        sep = separation[rd]
+        if not np.array_equal(sep["labels"], labels):
+            raise ValueError(f"Trial labels differ between readout and separation for {rd}")
+        in_a = split_groups(labels)
+        correct = (pred == labels[None, :])
+        i, j = np.triu_indices(len(labels), k=1)
+        row = {"run_dir": rd}
+        for g, members in (("A", in_a), ("B", ~in_a)):
+            row[f"acc_{g}"] = float(correct[:, members].mean())
+            select = members[i] & members[j]
+            row[f"SR_{g}"] = _ratio_sr(sep["state_raw_pair_mean"], sep["same_class"], select)
+            row[f"SR (Standardised)_{g}"] = _ratio_sr(sep["state_z_pair_mean"], sep["same_class"], select)
+            for name, key in (("bAP Consistency", "bap"), ("dSpike Consistency", "dsp")):
+                gm = gammas[rd][key]
+                vals = gm[i, j][select & (labels[i] == labels[j])]
+                vals = vals[~np.isnan(vals)]
+                row[f"{name}_{g}"] = float(vals.mean()) if len(vals) else np.nan
+        rows.append(row)
+    logger.info(f"split_half: {len(rows)} runs")
+
+    stats = {"n_runs": len(rows), "candidates": {}}
+    fig, axes = plt.subplots(2, len(names), figsize=(4.6 * len(names), 8.4))
+    for col, name in enumerate(names):
+        rec = {}
+        for kind, pairs in (("same", (("A", "A"), ("B", "B"))), ("cross", (("A", "B"), ("B", "A")))):
+            rs, rhos = [], []
+            for gc, ga in pairs:
+                x = np.array([r[f"{name}_{gc}"] for r in rows]); y = np.array([r[f"acc_{ga}"] for r in rows])
+                ok = ~np.isnan(x)
+                rs.append(pearsonr(x[ok], y[ok])[0])
+                # Rank correlation, which one extreme run cannot dominate
+                rhos.append(spearmanr(x[ok], y[ok])[0])
+            rec[f"r_{kind}"] = float(np.mean(rs))
+            rec[f"r_{kind}_each"] = [float(v) for v in rs]
+            rec[f"r2_{kind}"] = float(np.mean(rs) ** 2)
+            rec[f"rho_{kind}"] = float(np.mean(rhos))
+            rec[f"rho_{kind}_each"] = [float(v) for v in rhos]
+        stats["candidates"][name] = rec
+        for row_i, (kind, gc, ga) in enumerate((("same", "A", "A"), ("cross", "A", "B"))):
+            ax = axes[row_i, col]
+            x = np.array([r[f"{name}_{gc}"] for r in rows]); y = np.array([r[f"acc_{ga}"] for r in rows])
+            ok = ~np.isnan(x)
+            ax.scatter(x[ok], y[ok], s=16, color="#8172b2", edgecolors="k", linewidth=0.3)
+            ax.set_title(f"{name}\n{kind}: {name} from {gc}, accuracy from {ga}\n"
+                         f"r = {pearsonr(x[ok], y[ok])[0]:+.3f} (mean of both assignments {rec[f'r_{kind}']:+.3f})", fontsize=9)
+            ax.set_xlabel(f"{name} (group {gc})")
+            ax.set_ylabel(f"Accuracy (group {ga})")
+            ax.grid(True, linestyle=":", alpha=0.6)
+    fig.suptitle(f"Candidates and accuracy from the same / opposite halves of the test trials (N={len(rows)})", fontsize=12, fontweight="bold")
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "split_half.png"), dpi=200)
+    plt.close(fig)
+    with open(os.path.join(out_dir, "split_half.json"), "w") as f:
+        json.dump({**stats, "runs": rows}, f, indent=2)
+    logger.info(json.dumps(stats["candidates"], indent=2))
+
+
 # ==============================================================================
 # 7. Main Execution
 # ==============================================================================
@@ -703,6 +814,10 @@ def main(cfg: DictConfig):
     combo_results = run_combinations(combinations, values_by_name, s_intra, s_inter, accuracy)
     if combo_results:
         plot_combinations(combo_results, os.path.join(out_dir, "candidates_combinations.png"))
+
+    # 5. Candidates and accuracy from separate halves of the test trials
+    if cfg.get("split_half") and cfg.split_half.get("readout_curves_path"):
+        run_split_half(cfg, orig_cwd, out_dir)
 
     # 4. Save JSON results
     out_json_file = os.path.join(out_dir, "results.json")
