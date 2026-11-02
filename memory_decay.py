@@ -109,6 +109,10 @@ def score_draw(series, onsets, trial_rows, shifts, usable, labels, folds,
     """Predicted label of every test trial at every lag for one subset of sites."""
     num_folds = fold_gram.shape[1]
     predicted = np.full((len(shifts), len(labels)), -1, dtype=np.int16)
+    # Taking the subset's columns out of every window would read all sites of every
+    # row each time; with many draws at once that saturates memory bandwidth. The
+    # columns are copied out once per draw so that each window is a contiguous slice.
+    projected = np.ascontiguousarray(series[:, columns])
     for lag_index, shift in enumerate(shifts):
         gram = fold_gram[lag_index][np.ix_(np.arange(num_folds), columns, columns)]
         cross = fold_cross[lag_index][:, columns, :]
@@ -118,8 +122,8 @@ def score_draw(series, onsets, trial_rows, shifts, usable, labels, folds,
                 @ (cross_total - cross[fold])
             for n in np.flatnonzero(usable[lag_index] & (folds == fold)):
                 start = onsets[n] + shift
-                window = series[start:start + trial_rows][:, columns]
-                predicted[lag_index, n] = classify(window, weights, [(0, trial_rows)])[0]
+                predicted[lag_index, n] = classify(projected[start:start + trial_rows],
+                                                   weights, [(0, trial_rows)])[0]
     return predicted
 
 
