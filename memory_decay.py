@@ -1,28 +1,32 @@
-"""How long the class of a trial stays readable once the input has moved on.
+"""Whether the class of an earlier trial can be read from the state at one instant.
 
-Accuracy is scored by fitting a readout on the states of a trial and letting it
-vote, over the trial, for the class it sees. Sliding that window later by a lag L
-asks a different question: with the window now partly or wholly inside the
-following trials, can the states still tell which class trial n was? The answer as
-a function of L is a decay curve, and the lag at which it has fallen halfway from
-its value at L = 0 to chance is the half-life of the class memory.
+For a delay d, every time t whose earlier time t - d lies in a different trial is
+labelled with the class of the trial running at t - d, and a readout refitted for
+that delay is asked to name it from the state at t alone — one row, one answer.
 
-The readout is refitted at every lag. Reusing the L = 0 readout would only show it
-switching its vote to the next trial's class as the window enters it, which is set
-by how much of the window still lies in trial n rather than by what the cell keeps.
+Nothing is aggregated over time. A vote over a window lets a small share of rows
+that still carry the trial's own input decide the answer, so the decay it shows is
+set by how much of the window overlaps the trial rather than by what the cell
+keeps. Restricting to times outside the trial whose class is asked for removes the
+trial's own input altogether; whatever is read there is held in the state.
+
+The readout is refitted at every delay. The readout fitted on the current class
+would only show the previous class as a mistake about the present one; refitting
+asks whether the earlier class is held in the state in a form a readout can use.
 
 Only the test trials are used, split into folds that each hold one trial of every
-class. The training trials run through the classes in a fixed order, so a readout
-fitted on shifted windows there could learn "the previous class is the current one
-minus one" — a rule that fails on the shuffled test order and would make the decay
-look faster than the memory is. The test order is random, so no such rule exists
-to be learned.
+class, and each time belongs to the fold of the trial whose class it is asked for.
+The training trials run through the classes in a fixed order, so a readout of the
+previous class fitted there could learn the order instead of anything held in the
+state. Chance is measured rather than assumed: the class sequence is shuffled and
+the same computation repeated, which also carries any bias of the folding itself.
 
-Fitting with readout_subset.fit_readout at every lag, draw and fold would take
-hours per run. The fit only needs X^T X and X^T Y, and both are sums over trials,
-so they are accumulated once per lag and fold over every recording site and the
-subset is indexed out of them. That is the same estimate; at L = 0 the first
-check_draws draws are refitted with fit_readout itself and compared.
+For a source trial m the times used form one contiguous stretch, starting
+max(d, T) after its onset and lasting min(d, T), T being the trial length. Fitting
+needs only X^T X and X^T Y over those stretches, so they are accumulated once per
+delay and fold over every recording site and the subset is indexed out of them; at
+check_delay_ms the first check_draws draws are refitted with
+readout_subset.fit_readout itself and compared.
 
 Following SPEC_NumericalCode the computation never draws: ``mode=compute`` writes
 ``memory_decay_sNNN.npz`` and ``results.json``, and ``mode=plot`` reads one back.
@@ -39,8 +43,8 @@ import hydra
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
-from readout_subset import (COLOR_TEST, HYDRA_CONFIG_FILENAME, classify, fit_readout,
-                            load_run, resolve_run_dirs)
+from readout_subset import (COLOR_TEST, HYDRA_CONFIG_FILENAME, fit_readout, load_run,
+                            resolve_run_dirs)
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
@@ -53,8 +57,7 @@ def continuous_test_series(data):
 
     Each trial file holds both of its end points, so the last sample of a trial is
     the first sample of the next one. Dropping the repeat makes the series uniform
-    in time, and a window of one trial's length starting at a trial's onset is then
-    exactly that trial's rows.
+    in time.
     """
     train_size = int(data["train_dataset_size"])
     test_size = int(data["test_dataset_size"])
@@ -72,8 +75,9 @@ def continuous_test_series(data):
             raise ValueError(f"test trials {n} and {n + 1} do not share their boundary sample")
         series[n * (trial_rows - 1):(n + 1) * (trial_rows - 1)] = states[first:first + trial_rows - 1]
     series[-1] = states[-1]
-    onsets = np.arange(test_size) * (trial_rows - 1)
-    return series, onsets, trial_rows
+    period = trial_rows - 1
+    onsets = np.arange(test_size) * period
+    return series, onsets, period
 
 
 def assign_folds(labels, num_folds):
@@ -88,176 +92,210 @@ def assign_folds(labels, num_folds):
     return folds
 
 
-def accumulate_lag(series, onsets, trial_rows, shift, usable, labels, folds,
-                   num_folds, num_classes):
-    """X^T X and X^T Y of every fold at one lag, over all recording sites."""
+def stretches(onsets, period, shift, num_rows):
+    """Start and length of the times whose class is that of each source trial.
+
+    A time t is used when t - shift falls in trial m but t itself does not, which
+    leaves t in [onset_m + max(shift, period), onset_m + shift + period). Trials
+    whose stretch would run past the end of the recording are marked unusable.
+    """
+    starts = onsets + max(shift, period)
+    length = min(shift, period)
+    usable = starts + length <= num_rows
+    return starts, length, usable
+
+
+def accumulate_delay(series, starts, length, usable, labels, folds, num_folds, num_classes):
+    """X^T X and X^T Y of every fold at one delay, over all recording sites."""
     num_sites = series.shape[1]
     gram = np.zeros((num_folds, num_sites, num_sites))
     cross = np.zeros((num_folds, num_sites, num_classes))
-    for n in np.flatnonzero(usable):
-        start = onsets[n] + shift
-        window = np.asarray(series[start:start + trial_rows], dtype=np.float64)
-        gram[folds[n]] += window.T @ window
-        # The target is one-hot over every row of the trial, so its product with
-        # the states is the column sum of the window placed in the trial's class.
-        cross[folds[n], :, labels[n]] += window.sum(axis=0)
+    for m in np.flatnonzero(usable):
+        stretch = np.asarray(series[starts[m]:starts[m] + length], dtype=np.float64)
+        gram[folds[m]] += stretch.T @ stretch
+        # Every time in the stretch is labelled with trial m's class, so its product
+        # with the one-hot target is the column sum placed in that class.
+        cross[folds[m], :, labels[m]] += stretch.sum(axis=0)
     return gram, cross
 
 
-def score_draw(series, onsets, trial_rows, shifts, usable, labels, folds,
-               fold_gram, fold_cross, columns, reg):
-    """Predicted label of every test trial at every lag for one subset of sites."""
+def accumulate_all(series, onsets, period, shifts, labels, folds, num_folds, num_classes,
+                   n_jobs):
+    from joblib import Parallel, delayed
+
+    parts = Parallel(n_jobs=n_jobs, prefer="threads")(
+        delayed(accumulate_delay)(series, *stretches(onsets, period, shift, series.shape[0]),
+                                  labels, folds, num_folds, num_classes)
+        for shift in shifts)
+    return np.stack([g for g, _ in parts]), np.stack([c for _, c in parts])
+
+
+def solve(gram, cross, fold, reg):
+    """Weights fitted on every fold but one, from the per-fold sums."""
+    return np.linalg.inv(gram.sum(axis=0) - gram[fold] + reg * np.eye(gram.shape[-1])) \
+        @ (cross.sum(axis=0) - cross[fold])
+
+
+def score_draw(series, onsets, period, shifts, labels, folds, fold_gram, fold_cross,
+               columns, reg):
+    """Correct and scored times at every delay for one subset of sites."""
     num_folds = fold_gram.shape[1]
-    predicted = np.full((len(shifts), len(labels)), -1, dtype=np.int16)
-    # Taking the subset's columns out of every window would read all sites of every
-    # row each time; with many draws at once that saturates memory bandwidth. The
-    # columns are copied out once per draw so that each window is a contiguous slice.
+    correct = np.zeros(len(shifts), dtype=np.int64)
+    scored = np.zeros(len(shifts), dtype=np.int64)
+    # Copied out once per draw so that each stretch is a contiguous slice; indexing
+    # the columns out of every stretch reads all sites of each row.
     projected = np.ascontiguousarray(series[:, columns])
-    for lag_index, shift in enumerate(shifts):
-        gram = fold_gram[lag_index][np.ix_(np.arange(num_folds), columns, columns)]
-        cross = fold_cross[lag_index][:, columns, :]
-        gram_total, cross_total = gram.sum(axis=0), cross.sum(axis=0)
+    every_fold = np.arange(num_folds)
+    for i, shift in enumerate(shifts):
+        starts, length, usable = stretches(onsets, period, shift, series.shape[0])
+        gram = fold_gram[i][np.ix_(every_fold, columns, columns)]
+        cross = fold_cross[i][:, columns, :]
         for fold in range(num_folds):
-            weights = np.linalg.inv(gram_total - gram[fold] + reg * np.eye(len(columns))) \
-                @ (cross_total - cross[fold])
-            for n in np.flatnonzero(usable[lag_index] & (folds == fold)):
-                start = onsets[n] + shift
-                predicted[lag_index, n] = classify(projected[start:start + trial_rows],
-                                                   weights, [(0, trial_rows)])[0]
-    return predicted
+            weights = solve(gram, cross, fold, reg)
+            for m in np.flatnonzero(usable & (folds == fold)):
+                answers = np.argmax(projected[starts[m]:starts[m] + length] @ weights, axis=1)
+                correct[i] += int(np.count_nonzero(answers == labels[m]))
+                scored[i] += length
+    return correct, scored
 
 
-def check_against_fit_readout(series, onsets, trial_rows, labels, folds, num_folds,
+def score_all(series, onsets, period, shifts, labels, folds, fold_gram, fold_cross,
+              columns, reg, n_jobs, verbose=0):
+    from joblib import Parallel, delayed
+
+    results = Parallel(n_jobs=n_jobs, prefer="threads", verbose=verbose)(
+        delayed(score_draw)(series, onsets, period, shifts, labels, folds, fold_gram,
+                            fold_cross, columns[d], reg)
+        for d in range(len(columns)))
+    correct = np.stack([c for c, _ in results], axis=1)
+    scored = np.stack([s for _, s in results], axis=1)
+    return correct, scored
+
+
+def check_against_fit_readout(series, onsets, period, shift, labels, folds, num_folds,
                               num_classes, fold_gram, fold_cross, columns, reg):
-    """Refit at L = 0 with fit_readout and compare weights and predicted labels."""
-    gram = fold_gram[0][np.ix_(np.arange(num_folds), columns, columns)]
-    cross = fold_cross[0][:, columns, :]
-    worst_weight_gap, mismatched = 0.0, 0
+    """Refit one delay with fit_readout and compare weights and per-time answers."""
+    starts, length, usable = stretches(onsets, period, shift, series.shape[0])
+    gram = fold_gram[np.ix_(np.arange(num_folds), columns, columns)]
+    cross = fold_cross[:, columns, :]
+    worst_weight_gap, differing = 0.0, 0
     for fold in range(num_folds):
-        train = np.flatnonzero(folds != fold)
-        states = np.concatenate([series[onsets[n]:onsets[n] + trial_rows][:, columns]
-                                 for n in train])
-        target = np.zeros((len(train) * trial_rows, num_classes))
-        for i, n in enumerate(train):
-            target[i * trial_rows:(i + 1) * trial_rows, labels[n]] = 1.0
+        train = np.flatnonzero(usable & (folds != fold))
+        states = np.concatenate([series[starts[m]:starts[m] + length][:, columns] for m in train])
+        target = np.zeros((len(train) * length, num_classes))
+        for i, m in enumerate(train):
+            target[i * length:(i + 1) * length, labels[m]] = 1.0
         reference = fit_readout(states, target, reg)
-        accumulated = np.linalg.inv(gram.sum(axis=0) - gram[fold] + reg * np.eye(len(columns))) \
-            @ (cross.sum(axis=0) - cross[fold])
+        accumulated = solve(gram, cross, fold, reg)
         worst_weight_gap = max(worst_weight_gap, float(
             np.abs(reference - accumulated).max() / np.abs(reference).max()))
-        for n in np.flatnonzero(folds == fold):
-            window = series[onsets[n]:onsets[n] + trial_rows][:, columns]
-            mismatched += int(classify(window, reference, [(0, trial_rows)])[0]
-                              != classify(window, accumulated, [(0, trial_rows)])[0])
-    return worst_weight_gap, mismatched
-
-
-def half_life(lags_ms, accuracy, chance, min_initial_accuracy):
-    """First lag at which accuracy falls below halfway between L = 0 and chance.
-
-    Returns (half_life_ms, threshold, status). The crossing is placed by a straight
-    line between the two lags around it.
-    """
-    initial = float(accuracy[0])
-    threshold = (initial + chance) / 2
-    if initial <= min_initial_accuracy:
-        return None, threshold, "initial_accuracy_too_low"
-    below = np.flatnonzero(accuracy < threshold)
-    if len(below) == 0:
-        return None, threshold, "not_reached"
-    i = int(below[0])
-    fraction = (accuracy[i - 1] - threshold) / (accuracy[i - 1] - accuracy[i])
-    return float(lags_ms[i - 1] + fraction * (lags_ms[i] - lags_ms[i - 1])), threshold, "reached"
+        for m in np.flatnonzero(usable & (folds == fold)):
+            stretch = series[starts[m]:starts[m] + length][:, columns]
+            differing += int(np.count_nonzero(np.argmax(stretch @ reference, axis=1)
+                                              != np.argmax(stretch @ accumulated, axis=1)))
+    return worst_weight_gap, differing
 
 
 def _process_one_run(run_index, run_dir, cfg):
-    from joblib import Parallel, delayed
     from threadpoolctl import threadpool_limits
 
     data, _ = load_run(run_dir)
     reg = float(data["reg"]) if cfg.reg is None else float(cfg.reg)
     config = OmegaConf.load(os.path.join(run_dir, HYDRA_CONFIG_FILENAME))
 
-    series, onsets, trial_rows = continuous_test_series(data)
+    series, onsets, period = continuous_test_series(data)
     del data["test_state_vars"], data["train_state_vars"]
     labels = np.asarray(data["test_label"], dtype=int)
     num_classes = int(np.max(data["train_label"])) + 1
     num_sites = series.shape[1]
-    folds = assign_folds(labels, int(cfg.num_folds))
+    num_folds = int(cfg.num_folds)
+    folds = assign_folds(labels, num_folds)
 
-    step_ms = float(config.task.pattern_duration_ms) / (trial_rows - 1)
-    lags_ms = np.arange(0, float(cfg.lag_max_ms) + float(cfg.lag_step_ms) / 2,
-                        float(cfg.lag_step_ms))
-    shifts = np.rint(lags_ms / step_ms).astype(int)
-    if not np.allclose(shifts * step_ms, lags_ms):
-        raise ValueError(f"lag step {cfg.lag_step_ms} ms is not a multiple of the "
+    step_ms = float(config.task.pattern_duration_ms) / period
+    delays_ms = np.arange(float(cfg.delay_step_ms), float(cfg.delay_max_ms) + float(cfg.delay_step_ms) / 2,
+                          float(cfg.delay_step_ms))
+    shifts = np.rint(delays_ms / step_ms).astype(int)
+    if not np.allclose(shifts * step_ms, delays_ms):
+        raise ValueError(f"delay step {cfg.delay_step_ms} ms is not a multiple of the "
                          f"sampling step {step_ms} ms")
-    # A trial whose window would run past the end of the recording is left out of
-    # both fitting and scoring at that lag only.
-    usable = onsets[None, :] + shifts[:, None] + trial_rows <= series.shape[0]
     logger.info(f"{run_dir}: {len(labels)} test trials, {num_sites} sites, "
-                f"{len(lags_ms)} lags of {cfg.lag_step_ms} ms, step {step_ms} ms")
+                f"{len(delays_ms)} delays of {cfg.delay_step_ms} ms, step {step_ms} ms")
 
-    # Drawn exactly as readout_subset.py draws one subset size, so the same seed and
-    # run order give the same sites for the first draws.
+    # Drawn exactly as readout_subset.py draws one subset size.
     rng = np.random.default_rng(int(cfg.seed) + run_index)
     columns = np.array([rng.choice(num_sites, size=int(cfg.subset_size), replace=False)
                         for _ in range(int(cfg.num_draws))])
 
     n_jobs = int(cfg.n_jobs)
-    # Threads share the series instead of copying it into each worker; BLAS is held
-    # to one thread so that the workers do not oversubscribe the cores.
+    check_shift = int(np.rint(float(cfg.check_delay_ms) / step_ms))
+    if check_shift not in shifts:
+        raise ValueError(f"check_delay_ms={cfg.check_delay_ms} is not one of the delays")
+    check_index = int(np.flatnonzero(shifts == check_shift)[0])
+
+    # BLAS is held to one thread so that the worker threads do not oversubscribe.
     with threadpool_limits(limits=1):
-        accumulated = Parallel(n_jobs=n_jobs, prefer="threads")(
-            delayed(accumulate_lag)(series, onsets, trial_rows, shift, usable[i], labels,
-                                    folds, int(cfg.num_folds), num_classes)
-            for i, shift in enumerate(shifts))
-        fold_gram = np.stack([g for g, _ in accumulated])
-        fold_cross = np.stack([c for _, c in accumulated])
-        del accumulated
-        logger.info("Accumulated X^T X and X^T Y for every lag and fold")
+        fold_gram, fold_cross = accumulate_all(series, onsets, period, shifts, labels, folds,
+                                               num_folds, num_classes, n_jobs)
+        logger.info("Accumulated X^T X and X^T Y for every delay and fold")
 
-        checks = [check_against_fit_readout(series, onsets, trial_rows, labels, folds,
-                                            int(cfg.num_folds), num_classes, fold_gram,
-                                            fold_cross, columns[d], reg)
+        checks = [check_against_fit_readout(series, onsets, period, check_shift, labels, folds,
+                                            num_folds, num_classes, fold_gram[check_index],
+                                            fold_cross[check_index], columns[d], reg)
                   for d in range(min(int(cfg.check_draws), len(columns)))]
-        for d, (gap, mismatched) in enumerate(checks):
-            logger.info(f"check draw {d}: largest weight gap relative to fit_readout "
-                        f"{gap:.2e}, predicted labels that differ {mismatched}")
-        if any(mismatched for _, mismatched in checks):
-            logger.warning("accumulated fit and fit_readout disagree on some labels at L = 0")
+        for d, (gap, differing) in enumerate(checks):
+            logger.info(f"check draw {d} at {cfg.check_delay_ms} ms: largest weight gap relative "
+                        f"to fit_readout {gap:.2e}, answers that differ {differing}")
+        if any(differing for _, differing in checks):
+            logger.warning("accumulated fit and fit_readout disagree on some answers")
 
-        predicted = np.stack(Parallel(n_jobs=n_jobs, prefer="threads", verbose=5)(
-            delayed(score_draw)(series, onsets, trial_rows, shifts, usable, labels, folds,
-                                fold_gram, fold_cross, columns[d], reg)
-            for d in range(len(columns))), axis=1)
+        correct, scored = score_all(series, onsets, period, shifts, labels, folds, fold_gram,
+                                    fold_cross, columns, reg, n_jobs, verbose=5)
+        accuracy_per_draw = correct / scored
+        logger.info("Scored the true class sequence")
 
-    correct = (predicted == labels[None, None, :]) & usable[:, None, :]
-    accuracy_per_draw = correct.sum(axis=2) / usable.sum(axis=1)[:, None]
+        # Chance: shuffle the class sequence, rebuild the folds from the shuffled
+        # classes and repeat, so that the folding is the same kind as above.
+        shuffle_rng = np.random.default_rng(int(cfg.shuffle_seed) + run_index)
+        shuffle_columns = columns[:int(cfg.shuffle_draws)]
+        chance_per_draw = []
+        for s in range(int(cfg.num_shuffles)):
+            shuffled = shuffle_rng.permutation(labels)
+            shuffled_folds = assign_folds(shuffled, num_folds)
+            gram_s, cross_s = accumulate_all(series, onsets, period, shifts, shuffled,
+                                             shuffled_folds, num_folds, num_classes, n_jobs)
+            c, n = score_all(series, onsets, period, shifts, shuffled, shuffled_folds, gram_s,
+                             cross_s, shuffle_columns, reg, n_jobs)
+            chance_per_draw.append(c / n)
+            del gram_s, cross_s
+            logger.info(f"Scored shuffle {s + 1}/{cfg.num_shuffles}")
+        chance_per_draw = np.stack(chance_per_draw)
+
     accuracy = accuracy_per_draw.mean(axis=1)
-    chance = 1.0 / num_classes
-    half_life_ms, threshold, status = half_life(lags_ms, accuracy, chance,
-                                                float(cfg.min_initial_accuracy))
-    logger.info(f"Accuracy(0) = {accuracy[0]:.4f}, threshold {threshold:.4f}, "
-                f"half-life {half_life_ms} ms ({status})")
+    chance = chance_per_draw.mean(axis=2)
+    readable = accuracy > chance.max(axis=0)
+    readable_delays = delays_ms[readable]
+    logger.info(f"Accuracy at {delays_ms[0]:.0f} ms = {accuracy[0]:.4f} "
+                f"(chance max {chance[:, 0].max():.4f}); delays above every shuffle: "
+                f"{len(readable_delays)} of {len(delays_ms)}")
 
     sample_id = int(config.sample_id) if config.get("sample_id") is not None else run_index
     os.makedirs(cfg.data_dir, exist_ok=True)
     decay_path = os.path.join(cfg.data_dir, f"memory_decay_s{sample_id:03d}.npz")
-    np.savez_compressed(decay_path, lags_ms=lags_ms, predicted=predicted, usable=usable,
-                        test_label=labels.astype(np.int16), folds=folds.astype(np.int16),
-                        columns=columns.astype(np.int16),
+    np.savez_compressed(decay_path, delays_ms=delays_ms, correct=correct, scored=scored,
                         accuracy_per_draw=accuracy_per_draw, accuracy=accuracy,
-                        threshold=threshold, chance=chance,
-                        half_life_ms=np.nan if half_life_ms is None else half_life_ms,
-                        status=status, source_run=run_dir, reg=reg, sample_id=sample_id)
+                        chance_per_draw=chance_per_draw, chance=chance, readable=readable,
+                        test_label=labels.astype(np.int16), folds=folds.astype(np.int16),
+                        columns=columns.astype(np.int16), source_run=run_dir, reg=reg,
+                        sample_id=sample_id)
     logger.info(f"Saved {decay_path}")
 
-    return {"source_run": run_dir, "sample_id": sample_id, "run_index": run_index,
-            "reg": reg, "accuracy_at_zero": float(accuracy[0]),
-            "accuracy_at_zero_sd": float(accuracy_per_draw[0].std()),
-            "threshold": threshold, "half_life_ms": half_life_ms, "status": status,
-            "check_against_fit_readout": [{"draw": d, "weight_gap": gap, "labels_differing": m}
+    return {"source_run": run_dir, "sample_id": sample_id, "run_index": run_index, "reg": reg,
+            "first_delay_ms": float(delays_ms[0]), "accuracy_at_first_delay": float(accuracy[0]),
+            "chance_max_at_first_delay": float(chance[:, 0].max()),
+            "num_delays_above_every_shuffle": int(readable.sum()),
+            "delays_above_every_shuffle_ms": readable_delays.tolist(),
+            "check_against_fit_readout": [{"draw": d, "delay_ms": float(cfg.check_delay_ms),
+                                           "weight_gap": gap, "answers_differing": m}
                                           for d, (gap, m) in enumerate(checks)],
             "decay_path": os.path.abspath(decay_path)}
 
@@ -265,8 +303,7 @@ def _process_one_run(run_index, run_dir, cfg):
 def run_compute(cfg, original_cwd):
     run_dirs = resolve_run_dirs(cfg.run_dir, original_cwd)
     logger.info(f"Analysing {len(run_dirs)} run(s)")
-    # One run at a time: each already uses every core through its threads, and
-    # holding several runs' states at once would multiply the memory.
+    # One run at a time: each already uses every core through its threads.
     summaries = [_process_one_run(i, d, cfg) for i, d in enumerate(run_dirs)]
     results_path = os.path.join(cfg.data_dir, "results.json")
     with open(results_path, "w") as f:
@@ -285,33 +322,29 @@ def run_plot(cfg, original_cwd):
     with np.load(path, allow_pickle=False) as npz:
         decay = {key: npz[key] for key in npz.files}
 
-    lags_s = decay["lags_ms"] / 1000
+    delays_s = decay["delays_ms"] / 1000
     mean = decay["accuracy"]
     spread = decay["accuracy_per_draw"].std(axis=1)
-    half_life_ms = float(decay["half_life_ms"])
+    chance = decay["chance"]
 
     os.makedirs(cfg.figure_dir, exist_ok=True)
     fig, ax = plt.subplots(figsize=(7.0, 4.4))
-    ax.fill_between(lags_s, mean - spread, mean + spread, color=COLOR_TEST, alpha=0.18,
-                    linewidth=0, zorder=2)
-    ax.plot(lags_s, mean, color=COLOR_TEST, linewidth=2, zorder=3, label="Test (cross-validated)")
-    ax.axhline(float(decay["chance"]), color=COLOR_REFERENCE, linewidth=1, linestyle="--",
-               label="Chance")
-    ax.axhline(float(decay["threshold"]), color=COLOR_REFERENCE, linewidth=1, linestyle=":",
-               label="Halfway to chance")
-    if np.isfinite(half_life_ms):
-        ax.axvline(half_life_ms / 1000, color=COLOR_REFERENCE, linewidth=1, linestyle=":")
-        ax.annotate(f"half-life {half_life_ms:.0f} ms", xy=(half_life_ms / 1000, 1.0),
-                    xytext=(4, -2), textcoords="offset points", fontsize=9,
-                    color=COLOR_REFERENCE, va="top")
+    ax.fill_between(delays_s, chance.min(axis=0), chance.max(axis=0), color=COLOR_REFERENCE,
+                    alpha=0.18, linewidth=0, zorder=1, label="Shuffled classes (range)")
+    ax.plot(delays_s, chance.mean(axis=0), color=COLOR_REFERENCE, linewidth=1, linestyle="--",
+            zorder=2, label="Shuffled classes (mean)")
+    ax.fill_between(delays_s, mean - spread, mean + spread, color=COLOR_TEST, alpha=0.18,
+                    linewidth=0, zorder=3)
+    ax.plot(delays_s, mean, color=COLOR_TEST, linewidth=2, zorder=4, label="True classes")
 
-    ax.set_xlabel("Shift of the scoring window after the trial onset (s)")
-    ax.set_ylabel("Accuracy for the shifted trial's class")
-    ax.set_title(f"Class memory of sample {int(decay['sample_id']):03d}", pad=20)
+    ax.set_xlabel("Delay d between the state and the class asked for (s)")
+    ax.set_ylabel("Accuracy per time point")
+    ax.set_title(f"Class of an earlier trial read from one instant, sample "
+                 f"{int(decay['sample_id']):03d}", pad=20)
     ax.text(0.5, 1.03, "Line: mean   ·   Band: ± 1 sd across random subsets",
             transform=ax.transAxes, ha="center", fontsize=9, color=COLOR_REFERENCE)
-    ax.set_xlim(lags_s[0], lags_s[-1])
-    ax.set_ylim(0, 1.02)
+    ax.set_xlim(0, delays_s[-1])
+    ax.set_ylim(bottom=0)
     ax.grid(True, axis="y", linestyle=":", alpha=0.4)
     ax.spines[["top", "right"]].set_visible(False)
     ax.legend(frameon=False, loc="upper right")

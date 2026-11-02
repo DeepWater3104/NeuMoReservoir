@@ -1,27 +1,26 @@
 # Configuration for memory_decay.py
-# (how long the class of a trial stays readable once the window slides past it)
+# (whether the class of an earlier trial can be read from the state at one instant)
 defaults:
   - _self_
 hydra:
   job:
     chdir: True  # main.py と同様に outputs/YYYY-MM-DD/HH-MM-SS 以下へ出力する
 
-# compute: ずらし幅ごとに readout を学習し直し、予測ラベルを memory_decay.npz に、
-#          Accuracy(L) と半減時間を results.json に書く
-# plot:    保存済みの memory_decay.npz を読んで図を描く（再計算しない）
+# compute: 遅れごとに readout を学習し直し、正解した時刻の数を memory_decay_sNNN.npz に、
+#          Accuracy(d) と偶然の水準を results.json に書く
+# plot:    保存済みの memory_decay_sNNN.npz を読んで図を描く（再計算しない）
 mode: "compute"
 
 # compute モード: main.py のランのディレクトリ（readout_subset.py と同じ指定の仕方）。
-# 記録点の抽出の乱数種は seed + （このリストでの順番）なので、readout_subset.py と
-# 同じ glob を渡すと、最初の num_draws 回はそちらと同じ記録点の組になる。
+# 記録点の抽出の乱数種は seed + （このリストでの順番）。
 run_dir: null
 
-# plot モード: compute モードが書いた memory_decay.npz のパス
+# plot モード: compute モードが書いた memory_decay_sNNN.npz のパス
 decay_path: null
 
-# 判定区間のずらし幅（ms）。0 から lag_max_ms まで lag_step_ms 刻み。
-lag_step_ms: 5
-lag_max_ms: 2000
+# 遅れ d（ms）。delay_step_ms から delay_max_ms まで delay_step_ms 刻み。
+delay_step_ms: 5
+delay_max_ms: 2000
 
 # readout に使う記録地点の数と、引く組の数
 subset_size: 100
@@ -30,10 +29,13 @@ num_draws: 100
 # test 試行を分ける組の数。各クラスの test 試行数と同じでなければならない。
 num_folds: 5
 
-# 半減時間を決めない Accuracy(0) の上限（これ以下なら決めない）
-min_initial_accuracy: 0.2
+# 偶然の水準: クラスの並びを並べ替える回数と、各回の抽出の数（num_draws の先頭から使う）
+num_shuffles: 5
+shuffle_draws: 20
+shuffle_seed: 20261102
 
-# 学習と L=0 の照合に使う抽出の数（fit_readout と重み・予測ラベルを突き合わせる）
+# fit_readout と重み・予測ラベルを突き合わせる遅れ（ms）と抽出の数
+check_delay_ms: 500
 check_draws: 2
 
 # 並列実行数（スレッド。データを複製しないため）。-1 なら全コア。
